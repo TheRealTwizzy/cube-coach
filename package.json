@@ -1,0 +1,8 @@
+{
+  "name": "rubiks-solver",
+  "private": true,
+  "description": "Cube Coach: enter a 3x3 cube, follow an animated solve turn by turn.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
