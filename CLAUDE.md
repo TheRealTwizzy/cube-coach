@@ -11,5 +11,7 @@ Static page: paint a 3x3 cube's 54 stickers, solve it (Shortest = Kociemba via c
 - Published as a claude.ai Artifact: `index.html` + `js/*.js` + `vendor/cubejs/{cube,solve}.js` as supporting files. `index.html` has no doctype/html/head/body tags on purpose (the publisher wraps it); it keeps its own charset/viewport meta and `[hidden]` rule so it also works outside the wrapper.
 - Sticker order U R F D L B, 9 each, row-major Kociemba net; geometry conventions live in `js/cube.js`.
 - Modules are UMD-style plain scripts (window globals in browser, `module.exports` in Node). No bundler.
-- Finishing a branch: always merge back to `main` locally (user's standing choice; no remote). Run `npm test` on the merged result, then delete the branch.
+- Finishing a branch: always merge back to `main` locally, run `npm test` on the merged result, delete the branch, then push `main` to `origin` (user's standing choice). Remote: public repo https://github.com/TheRealTwizzy/cube-coach. Each push runs `.github/workflows/pages.yml` (tests, then deploy to https://therealtwizzy.github.io/cube-coach/).
+- Commits use the GitHub noreply address (repo-local `user.email`); never commit a personal email.
+- GitHub Pages serves the same `index.html`; the workflow wraps it in `<!doctype html><html lang="en">` at build time, so keep the source file wrapper-free for the claude.ai Artifact.
 - Spec: `docs/superpowers/specs/2026-09-27-rubiks-solver-design.md`. Plans: `docs/superpowers/plans/2026-09-27-rubiks-solver.md`, `docs/superpowers/plans/2026-09-28-patterns.md`, `docs/superpowers/plans/2026-09-28-scan.md`.
