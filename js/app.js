@@ -69,14 +69,21 @@
     ['cube', 'solve', 'patterns'].forEach(m => {
       const b = $(`mode-${m}`);
       b.setAttribute('aria-pressed', String(app.mode === m));
-      if (m !== 'cube') {
-        b.disabled = !app.confirmed;
-        b.title = app.confirmed ? '' : 'Set up My Cube first';
-      }
+      const locked = app.busy || (m !== 'cube' && !app.confirmed);
+      b.setAttribute('aria-disabled', String(locked));
+      b.title = app.busy ? 'Wait for the solve to finish' : locked ? 'Confirm My Cube first' : '';
     });
   }
   function setMode(mode) {
-    if (mode !== 'cube' && !app.confirmed) return;
+    if (app.busy) return;
+    if (mode !== 'cube' && !app.confirmed) {
+      if (!visible('cube')) return;
+      const status = $('cube-status');
+      status.classList.remove('ok');
+      status.textContent = `${mode === 'solve' ? 'Solve' : 'Patterns'} opens once My Cube is confirmed: make it match your cube, then press "This is my cube".`;
+      $('btn-confirm').focus({ preventScroll: false });
+      return;
+    }
     cancelCustomInput();
     player.afterTurn(() => {
       app.mode = mode;
@@ -270,10 +277,12 @@
   }
 
   // ---------- scanning (one photo per face; the camera is opened through a file input) ----------
-  let scan = null, shot = null, dragging = -1;
+  let scan = null, shot = null, photoSeq = 0, cancelArmed = null;
   function startScan() {
     scan = ScanLib.createScan();
     shot = null;
+    photoSeq++;
+    disarmCancel();
     $('btn-scan').hidden = true;
     $('paint-area').hidden = true;
     $('confirm-section').hidden = true;
@@ -285,6 +294,8 @@
   function endScan() {
     scan = null;
     shot = null;
+    photoSeq++;
+    disarmCancel();
     $('scan-file').value = '';
     $('scan-area').hidden = true;
     $('paint-area').hidden = false;
@@ -295,7 +306,9 @@
     if (!scan) return;
     const step = scan.step();
     if (!step) { finishScan(); return; }
-    $('scan-step').textContent = `Photo ${step.index + 1} of ${step.total} · ${FACE_WORD[step.face]} face`;
+    const stepText = `Photo ${step.index + 1} of ${step.total} · ${FACE_WORD[step.face]} face`;
+    if ($('scan-step').textContent !== stepText) $('scan-live').textContent = `${stepText}. ${step.instruction}`;
+    $('scan-step').textContent = stepText;
     $('scan-hold').textContent = `${step.instruction} Fill most of the photo with that face.`;
     $('scan-take').hidden = !!shot;
     $('scan-photo').hidden = !shot;
@@ -322,13 +335,15 @@
   }
   async function onPhoto(file) {
     if (!file || !scan) return;
+    const mine = ++photoSeq; // a newer pick, retake or cancel makes this one stale
     let source;
     try {
       source = await loadImage(file);
     } catch (err) {
-      $('scan-msg').textContent = err.message;
+      if (mine === photoSeq) $('scan-msg').textContent = err.message;
       return;
     }
+    if (mine !== photoSeq || !scan) { if (source.close) source.close(); return; }
     const canvas = $('scan-canvas'), s = Math.min(1, 480 / Math.max(source.width, source.height));
     canvas.width = Math.round(source.width * s);
     canvas.height = Math.round(source.height * s);
@@ -389,13 +404,23 @@
         shot.corners[k] = [Math.max(0, Math.min(canvas.width, x)), Math.max(0, Math.min(canvas.height, y))];
         drawShot();
       };
-      h.addEventListener('pointerdown', e => { e.preventDefault(); dragging = k; h.setPointerCapture(e.pointerId); });
+      let pointer = null;
+      h.addEventListener('pointerdown', e => {
+        if (pointer !== null) return;
+        e.preventDefault();
+        pointer = e.pointerId;
+        h.setPointerCapture(e.pointerId);
+      });
       h.addEventListener('pointermove', e => {
-        if (dragging !== k || !shot) return;
+        if (e.pointerId !== pointer || !shot) return;
         const canvas = $('scan-canvas'), r = canvas.getBoundingClientRect();
         moveTo((e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height);
       });
-      const drop = () => { if (dragging === k && shot) resample(); dragging = -1; };
+      const drop = e => {
+        if (e.pointerId !== pointer) return;
+        pointer = null;
+        if (shot) resample();
+      };
       h.addEventListener('pointerup', drop);
       h.addEventListener('pointercancel', drop);
       h.addEventListener('keydown', e => {
@@ -408,8 +433,25 @@
       box.appendChild(h);
     });
   }
+  // Cancelling throws the photos away, so with any taken it asks for a second tap.
+  function cancelScan() {
+    const taken = Object.keys(scan.faces).length + (shot ? 1 : 0);
+    if (taken && !cancelArmed) {
+      $('scan-cancel').textContent = `Discard ${taken} photo${taken === 1 ? '' : 's'}?`;
+      cancelArmed = setTimeout(disarmCancel, 5000);
+      return;
+    }
+    endScan();
+    $('btn-scan').focus({ preventScroll: true });
+  }
+  function disarmCancel() {
+    clearTimeout(cancelArmed);
+    cancelArmed = null;
+    $('scan-cancel').textContent = 'Cancel scan';
+  }
   function retakePhoto() {
     shot = null;
+    photoSeq++;
     $('scan-anyway').hidden = true;
     $('scan-file').value = '';
     $('scan-msg').textContent = '';
@@ -484,6 +526,7 @@
     app.busy = true;
     renderSolveErrors('');
     renderSolveButton();
+    renderModeSwitch();
     try {
       const steps = method === 'fast' ? await Fast.solve(input) : await later(() => Beginner.solve(input));
       if (app.mode !== 'solve') return;
@@ -495,6 +538,7 @@
     } finally {
       app.busy = false;
       renderSolveButton();
+      renderModeSwitch();
     }
   }
 
@@ -796,7 +840,7 @@
       const f = e.target.closest('.face');
       if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); retakeFace(f.dataset.face); }
     });
-    $('scan-cancel').addEventListener('click', () => { endScan(); $('btn-scan').focus({ preventScroll: true }); });
+    $('scan-cancel').addEventListener('click', cancelScan);
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
       app.method = r.value;
       renderSolveButton();
