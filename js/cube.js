@@ -50,10 +50,22 @@
   const IDENTITY = FACELETS.map(f => f.index);
   const compose = (p, q) => p.map(d => q[d]); // p, then q
 
+  // Every move's turning axis and layer, used for both the permutations and the animation.
+  // Face turns U..B, wide turns u..b (face + middle), slices M E S (turn like L, D, F), rotations x y z.
   const AXES = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+  const LAYERS = {};
+  FACES.forEach(f => {
+    const n = NORMALS[f];
+    LAYERS[f] = { axis: n, inLayer: p => dot(p, n) > 0.5 };
+    LAYERS[f.toLowerCase()] = { axis: n, inLayer: p => dot(p, n) > -0.5 };
+  });
+  LAYERS.M = { axis: NORMALS.L, inLayer: p => Math.abs(p[0]) < 0.5 };
+  LAYERS.E = { axis: NORMALS.D, inLayer: p => Math.abs(p[1]) < 0.5 };
+  LAYERS.S = { axis: NORMALS.F, inLayer: p => Math.abs(p[2]) < 0.5 };
+  Object.keys(AXES).forEach(a => { LAYERS[a] = { axis: AXES[a], inLayer: () => true }; });
+
   const BASE = {};
-  FACES.forEach(f => { BASE[f] = quarterPerm(NORMALS[f], p => dot(p, NORMALS[f]) > 0.5); });
-  Object.keys(AXES).forEach(a => { BASE[a] = quarterPerm(AXES[a], () => true); });
+  Object.keys(LAYERS).forEach(b => { BASE[b] = quarterPerm(LAYERS[b].axis, LAYERS[b].inLayer); });
 
   const PERMS = {};
   Object.keys(BASE).forEach(b => {
@@ -133,16 +145,66 @@
   // For animation: rotate the cubies where inLayer(pos) by angle (right-handed) about axis.
   function moveGeometry(move) {
     if (!PERMS[move]) throw new Error('Unknown move: ' + move);
-    const base = move[0], suffix = move.slice(1);
+    const layer = LAYERS[move[0]], suffix = move.slice(1);
     const turns = suffix === '2' ? 2 : suffix === "'" ? -1 : 1;
-    const axis = AXES[base] || NORMALS[base];
-    const inLayer = AXES[base] ? () => true : p => dot(p, axis) > 0.5;
-    return { axis: axis.slice(), angle: -turns * Math.PI / 2, inLayer };
+    return { axis: layer.axis.slice(), angle: -turns * Math.PI / 2, inLayer: layer.inLayer };
+  }
+
+  // Whole-cube orientations: the 24 ways to hold a cube, as rotation sequences.
+  const ROTATIONS = [];
+  ['', 'x', 'x2', "x'", 'z', "z'"].forEach(a => ['', 'y', 'y2', "y'"].forEach(b => ROTATIONS.push([a, b].filter(Boolean))));
+  const centerKey = state => FACES.map(f => centerColor(state, f)).join('');
+  const rotationTo = (state, key) => ROTATIONS.find(r => centerKey(applyMoves(state, r)) === key) || null;
+
+  // Reads move sequences as people paste them: curly quotes, 2', Rw, no spaces, (groups)N.
+  function parseAlgorithm(text, opts) {
+    const maxMoves = (opts && opts.maxMoves) || 1000;
+    const src = String(text || '').replace(/[’‘′´`]/g, "'");
+    const stack = [[]];
+    let i = 0, moveNo = 0;
+    const fail = error => ({ error, at: i });
+    const tooLong = () => stack.reduce((n, g) => n + g.length, 0) > maxMoves;
+    while (i < src.length) {
+      const ch = src[i];
+      if (/\s/.test(ch)) { i++; continue; }
+      if (ch === '(') { stack.push([]); i++; continue; }
+      if (ch === ')') {
+        if (stack.length === 1) return fail("There's a ')' without a matching '('.");
+        const group = stack.pop();
+        i++;
+        const rep = /^[x×*]?(\d+)/.exec(src.slice(i));
+        const times = rep ? Number(rep[1]) : 1;
+        if (rep) i += rep[0].length;
+        for (let k = 0; k < times; k++) {
+          stack[stack.length - 1].push(...group);
+          if (tooLong()) return fail(`That's more than ${maxMoves} moves.`);
+        }
+        continue;
+      }
+      if (ch === '[' || ch === ']') return fail('Brackets like [R, U] are not supported. Write the moves out in full.');
+      moveNo++;
+      const rest = src.slice(i);
+      const m = /^([URFDLBMESurfdlbxyz])(w?)(2'|'2|2|')?/.exec(rest);
+      if (!m || (m[2] && !'URFDLB'.includes(m[1])) || /^\d/.test(rest.slice(m[0].length))) {
+        const bad = (/^[^\s()]+/.exec(rest) || [ch])[0];
+        const hint = /^[mes]/.test(bad) ? ' Slice moves are written in capitals: M, E, S.' : '';
+        return fail(`Unknown move '${bad}' (move ${moveNo}).${hint}`);
+      }
+      const base = m[2] ? m[1].toLowerCase() : m[1];
+      const suffix = m[3] === "2'" || m[3] === "'2" ? '2' : m[3] || '';
+      stack[stack.length - 1].push(base + suffix);
+      if (tooLong()) return fail(`That's more than ${maxMoves} moves.`);
+      i += m[0].length;
+    }
+    if (stack.length > 1) return fail("A '(' is never closed.");
+    if (!stack[0].length) return fail("Enter at least one move, like R U R' U'.");
+    return { moves: stack[0] };
   }
 
   return {
     FACES, NORMALS, COLORS, SOLVED, FACELETS, EDGES, CORNERS, PERMS, MOVES,
     parseMoves, applyPerm, applyMove, applyMoves, sequencePerm, invertMove, invertMoves,
     centerColor, isSolved, toFaceletString, randomScramble, moveGeometry,
+    ROTATIONS, centerKey, rotationTo, parseAlgorithm,
   };
 });
