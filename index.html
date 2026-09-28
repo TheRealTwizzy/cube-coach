@@ -149,6 +149,35 @@
   .chip.done { background: var(--surface-2); color: var(--ink); }
   .chip.now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
 
+  .modes { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+  .modes button { padding: 7px 16px; border: 0; border-radius: 999px; background: none; color: var(--muted); cursor: pointer;
+    font: 700 16px/1 var(--font-display); letter-spacing: .05em; text-transform: uppercase; }
+  .modes button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .field { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface);
+    color: var(--ink); font: 500 15px/1.3 var(--font-mono); }
+  .plabel { font: 700 18px/1.1 var(--font-display); letter-spacing: .03em; text-transform: uppercase; }
+  .prow { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .perr { margin: 0; color: var(--danger); font-size: 14px; }
+  .perr:empty { display: none; }
+  .pd-body { display: grid; gap: 12px; }
+  .pd-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .pd-name { font: 700 26px/1.1 var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
+  .pd-alias { color: var(--muted); font-size: 14px; }
+  .pd-alg { margin: 0; font: 500 14px/1.6 var(--font-mono); overflow-wrap: anywhere; }
+  .pd-now { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .pd-now .tip { flex: 1 1 180px; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .pcard { display: grid; justify-items: center; align-content: start; gap: 4px; padding: 8px 6px 10px; border: 1px solid var(--line);
+    border-radius: 12px; background: var(--surface); text-align: center; cursor: pointer; content-visibility: auto; contain-intrinsic-size: auto 150px; }
+  .pcard:hover { border-color: var(--muted); }
+  .pcard[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .pname { font-size: 13px; font-weight: 600; line-height: 1.2; }
+  .pturns { font: 500 11px/1 var(--font-mono); color: var(--muted); }
+  .thumb { width: 72px; height: 83px; }
+  .thumb .s-body { fill: var(--plastic); }
+  .thumb .s-w { fill: var(--c-w); } .thumb .s-y { fill: var(--c-y); } .thumb .s-g { fill: var(--c-g); }
+  .thumb .s-b { fill: var(--c-b); } .thumb .s-r { fill: var(--c-r); } .thumb .s-o { fill: var(--c-o); }
+
   @media (max-width: 860px) {
     .layout { grid-template-columns: 1fr; }
     .viewer { position: static; }
@@ -159,6 +188,11 @@
     .is-playing .view-note { display: none; }
     .is-playing .card { scroll-margin-top: calc(34vh + 24px); }
     .is-playing .controls { position: sticky; bottom: env(safe-area-inset-bottom, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
+    /* Patterns on phones: keep a smaller cube preview on top while browsing. */
+    .is-patterns .viewer { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
+    .is-patterns #view { max-height: 28vh; }
+    .is-patterns .view-note { display: none; }
+    .is-patterns .pdetail { scroll-margin-top: calc(28vh + 24px); }
   }
   @media (max-width: 440px) {
     .methods { grid-template-columns: 1fr; }
@@ -179,6 +213,10 @@
       </div>
       <h1>Cube Coach</h1>
     </div>
+    <nav class="modes" aria-label="Mode">
+      <button type="button" id="mode-solve" aria-pressed="true">Solve</button>
+      <button type="button" id="mode-patterns" aria-pressed="false">Patterns</button>
+    </nav>
     <div class="hold" id="hold" aria-live="polite"></div>
   </header>
   <p class="banner" id="banner" role="alert" hidden></p>
@@ -229,6 +267,44 @@
       </div>
     </section>
 
+    <section class="panel" id="pattern-panel" aria-label="Patterns" hidden>
+      <div class="section">
+        <h2>Make a pattern</h2>
+        <div class="card pdetail" id="pattern-detail">
+          <p class="tip" id="pd-empty">Pick a pattern from the library below, or type your own move sequence.</p>
+          <div class="pd-body" id="pd-body" hidden>
+            <div class="pd-head"><strong class="pd-name" id="pd-name"></strong><span class="pd-alias" id="pd-alias"></span></div>
+            <p class="pd-alg" id="pd-alg"></p>
+            <div class="methods" role="radiogroup" aria-label="Start from">
+              <label class="method"><input type="radio" name="from" id="from-solved" value="solved">
+                <strong>Solved cube</strong><span id="from-solved-info"></span></label>
+              <label class="method"><input type="radio" name="from" id="from-now" value="now">
+                <strong>My cube now</strong><span id="from-now-info"></span></label>
+            </div>
+            <div class="pd-now" id="pd-now" hidden>
+              <div class="net mini" id="now-net"></div>
+              <p class="tip" id="now-label"></p>
+            </div>
+            <p class="status" id="route-status" aria-live="polite"></p>
+            <button class="btn primary" id="btn-show" type="button">Show me</button>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <label class="plabel" for="custom-alg">Your own sequence</label>
+        <input class="field" id="custom-alg" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+          placeholder="e.g. R2 L2 U2 D2 F2 B2">
+        <p class="perr" id="custom-error" aria-live="polite"></p>
+      </div>
+      <div class="section">
+        <div class="prow"><label class="plabel" for="pattern-search">Library</label><span class="tip" id="pattern-count"></span></div>
+        <input class="field" id="pattern-search" type="search" autocomplete="off" placeholder="Search patterns">
+        <div class="gallery" id="gallery"></div>
+        <p class="tip">Pattern names and move sequences come from the
+          <a href="https://ruwix.com/the-rubiks-cube/rubiks-cube-patterns-algorithms/" target="_blank" rel="noopener noreferrer">ruwix.com pattern gallery</a>.</p>
+      </div>
+    </section>
+
     <section class="panel" id="play-panel" aria-label="Solution" hidden>
       <div class="play-head">
         <button class="btn" id="btn-edit" type="button">← Edit cube</button>
@@ -273,6 +349,7 @@
 <script src="js/cube.js"></script>
 <script src="js/validate.js"></script>
 <script src="js/describe.js"></script>
+<script src="js/patterns.js"></script>
 <script src="js/player.js"></script>
 <script src="js/fast.js"></script>
 <script src="js/beginner.js"></script>

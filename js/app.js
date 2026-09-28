@@ -1,4 +1,5 @@
-// UI: sticker input, validation, solving, and turn-by-turn playback.
+// UI: two modes. Solve: paint the cube, validate, solve. Patterns: pick or type a pattern and
+// make it from a solved cube or straight from "my cube now". Both play back turn by turn.
 (function () {
   'use strict';
   const M = window.CubeModel;
@@ -7,6 +8,7 @@
   const Beginner = window.BeginnerSolver;
   const D = window.CubeDescribe;
   const P = window.CubePlayer;
+  const Pat = window.CubePatterns;
 
   const NAMES = D.NAMES;
   const FACE_WORD = D.FACE_WORD;
@@ -16,18 +18,66 @@
   const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
 
   const $ = id => document.getElementById(id);
-  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   // Only page scrolling honors reduced motion; turn animations always play (they are the instructions).
   const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const narrow = () => !!(window.matchMedia && window.matchMedia('(max-width: 860px)').matches);
+  const scrollBehavior = () => (reducedMotion ? 'auto' : 'smooth');
 
-  const app = { state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false, playMethod: 'fast', view: null };
-  let netCells = [], miniCells = [], editorCells = [], player = null;
+  const app = {
+    mode: 'solve', state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false, view: null,
+    play: { kind: 'solve', method: 'fast', name: '', picture: null },
+    physical: null,          // { state, label }: the cube as the user last had it in their hands
+    sel: null,               // selected pattern { name, moves, state, custom, aliasText }
+    startFrom: 'solved',     // 'solved' | 'now'
+    route: null,             // { key, status: 'waiting'|'loading'|'ready'|'error', plan, from, moves, message }
+  };
+  let netCells = [], miniCells = [], editorCells = [], nowCells = [], player = null;
+  let galleryBuilt = false, routeSeq = 0, routeTimer = null, customTimer = null;
 
   const colorName = (s, f) => NAMES[M.centerColor(s, f)];
+  const statesFrom = (start, steps) => steps.reduce((acc, st) => { acc.push(M.applyMove(acc[acc.length - 1], st.move)); return acc; }, [start.slice()]);
   const later = fn => new Promise((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
   }, 30));
   function showBanner(text) { const b = $('banner'); b.textContent = text; b.hidden = false; }
+  function setPhysical(state, label) { app.physical = { state: state.slice(), label }; }
+
+  // ---------- panels and modes ----------
+  function showPanel(name) {
+    $('input-panel').hidden = name !== 'input';
+    $('pattern-panel').hidden = name !== 'patterns';
+    $('play-panel').hidden = name !== 'play';
+    document.body.classList.toggle('is-playing', name === 'play');
+    document.body.classList.toggle('is-patterns', name === 'patterns');
+  }
+  function renderModeSwitch() {
+    $('mode-solve').setAttribute('aria-pressed', String(app.mode === 'solve'));
+    $('mode-patterns').setAttribute('aria-pressed', String(app.mode === 'patterns'));
+  }
+  function setMode(mode) {
+    player.afterTurn(() => {
+      app.mode = mode;
+      renderModeSwitch();
+      if (mode === 'solve') enterSolve();
+      else enterPatterns();
+    });
+  }
+  function enterSolve() {
+    showPanel('input');
+    if (app.physical && app.physical.state.join('') !== app.state.join('')) {
+      setInputState(app.physical.state, `Loaded from: ${app.physical.label}. If your real cube looks different, paint over it.`);
+    } else {
+      renderInput();
+    }
+  }
+  function enterPatterns() {
+    buildGallery();
+    showPanel('patterns');
+    app.startFrom = app.physical && !M.isSolved(app.physical.state) ? 'now' : 'solved';
+    showPatternInView();
+    renderPatternDetail();
+    requestRoute();
+  }
 
   // ---------- 2D nets ----------
   function buildNet(rootEl, interactive) {
@@ -73,7 +123,7 @@
   }
   const paintNet = (cells, state, bad) => cells.forEach((el, i) => paintCell(el, i, state, bad));
 
-  // ---------- selected face: large editor + reading hint ----------
+  // ---------- Solve mode: painting ----------
   function buildEditor() {
     const grid = $('editor');
     for (let k = 0; k < 9; k++) {
@@ -97,8 +147,6 @@
     $('hold').innerHTML = `Hold: <i class="dot" style="--c:var(--c-${up})"></i>${NAMES[up]} on top ` +
       `<i class="dot" style="--c:var(--c-${front})"></i>${NAMES[front]} facing you`;
   }
-
-  // ---------- input mode ----------
   function buildPalette() {
     const rootEl = $('palette');
     PALETTE.forEach(c => {
@@ -131,19 +179,28 @@
     app.bad.delete(i);
     renderInput();
   }
-  function setInputState(next, noteHtml) {
+  function setNote(content) {
+    const el = $('scramble-note');
+    el.textContent = '';
+    if (typeof content === 'string') el.textContent = content;
+    else if (content) el.appendChild(content);
+  }
+  function setInputState(next, note) {
     if (app.busy) return;
-    app.state = next;
+    app.state = next.slice();
     app.bad = new Set();
     renderErrors([]);
-    $('scramble-note').innerHTML = noteHtml || '';
+    setNote(note || '');
     renderInput();
   }
   function loadExample() {
     const scramble = M.randomScramble(20);
-    setInputState(M.applyMoves(M.SOLVED, scramble),
-      'Example cube loaded. Paint over it with your own colors, or scramble a solved cube with ' +
-      `<code>${scramble.join(' ')}</code> (white on top, green facing you) to try the app first.`);
+    const note = document.createDocumentFragment();
+    const code = document.createElement('code');
+    code.textContent = scramble.join(' ');
+    note.append('Example cube loaded. Paint over it with your own colors, or scramble a solved cube with ', code,
+      ' (white on top, green facing you) to try the app first.');
+    setInputState(M.applyMoves(M.SOLVED, scramble), note);
   }
   function renderErrors(errors) {
     const ul = $('errors');
@@ -183,12 +240,14 @@
     if (!result.ok) return;
     // Snapshot what was validated; the solution must match this cube even if the UI changes meanwhile.
     const input = app.state.slice(), method = app.method;
+    setPhysical(input, 'Your checked cube');
     app.busy = true;
     renderSolveButton();
     try {
       const steps = method === 'fast' ? await Fast.solve(input) : await later(() => Beginner.solve(input));
+      if (app.mode !== 'solve') return;
       app.state = input;
-      startPlayback(steps, method);
+      startPlayback({ states: statesFrom(input, steps), steps, kind: 'solve', method, name: '', picture: null });
     } catch (err) {
       renderErrors([{
         message: err.code === 'SOLVER_RESTARTING'
@@ -202,28 +261,169 @@
     }
   }
 
-  // ---------- playback ----------
-  function startPlayback(steps, method) {
-    app.playMethod = method;
-    const states = [app.state.slice()];
-    steps.forEach((st, k) => states.push(M.applyMove(states[k], st.move)));
-    $('input-panel').hidden = true;
-    $('play-panel').hidden = false;
-    document.body.classList.add('is-playing');
-    if (app.view) app.view.resetView();
-    player.load(states, steps);
-    buildMoveList(steps);
-    renderPlay(player);
-    const behavior = reducedMotion ? 'auto' : 'smooth';
-    // Phones: bring the step card up under the sticky cube; controls stick to the bottom.
-    if (window.matchMedia && window.matchMedia('(max-width: 860px)').matches) $('card').scrollIntoView({ block: 'start', behavior });
-    else window.scrollTo({ top: 0, behavior });
+  // ---------- Patterns mode ----------
+  function buildGallery() {
+    if (galleryBuilt) return;
+    galleryBuilt = true;
+    const grid = $('gallery');
+    Pat.entries().forEach(e => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pcard';
+      b.dataset.index = String(e.index);
+      b.setAttribute('aria-pressed', 'false');
+      b.innerHTML = Pat.thumbnailSvg(e.state); // generated from sticker data only
+      const name = document.createElement('span');
+      name.className = 'pname';
+      name.textContent = e.name;
+      const turns = document.createElement('span');
+      turns.className = 'pturns';
+      turns.textContent = `${e.moves.length} moves`;
+      b.append(name, turns);
+      grid.appendChild(b);
+    });
+    filterGallery();
   }
-  function backToEdit() {
+  function filterGallery() {
+    const q = $('pattern-search').value;
+    const all = Pat.entries();
+    let shown = 0;
+    $('gallery').querySelectorAll('.pcard').forEach(card => {
+      const hit = Pat.matches(all[Number(card.dataset.index)], q);
+      card.hidden = !hit;
+      if (hit) shown++;
+    });
+    $('pattern-count').textContent = shown === all.length ? `${all.length} patterns` : `${shown} of ${all.length}`;
+  }
+  function markCards() {
+    const idx = app.sel && !app.sel.custom ? String(app.sel.index) : null;
+    $('gallery').querySelectorAll('.pcard').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.index === idx)));
+  }
+  function showPatternInView() {
+    if (app.view) app.view.setState(app.sel ? app.sel.state : app.physical ? app.physical.state : M.SOLVED);
+  }
+  function selectPattern(sel) {
+    app.sel = sel;
+    markCards();
+    showPatternInView();
+    renderPatternDetail();
+    requestRoute();
+    if (narrow()) $('pattern-detail').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+  }
+  function onCustomInput() {
+    const text = $('custom-alg').value;
+    if (!text.trim()) { $('custom-error').textContent = ''; return; }
+    const r = Pat.fromAlgorithm(text);
+    if (r.error) {
+      $('custom-error').textContent = r.error;
+      if (app.sel && app.sel.custom) { app.sel = null; markCards(); showPatternInView(); renderPatternDetail(); }
+      return;
+    }
+    $('custom-error').textContent = '';
+    const same = Pat.findByKey(Pat.canonicalKey(r.state));
+    const aliasText = same ? `Makes the same pattern as ${same.name}` : M.isSolved(r.state) ? 'This sequence leaves the cube solved' : '';
+    selectPattern({ name: 'Your sequence', moves: r.moves, state: r.state, custom: true, aliasText });
+  }
+  const routeKey = () => (app.sel && app.physical ? app.physical.state.join('') + '|' + app.sel.state.join('') : '');
+  function requestRoute() {
+    clearTimeout(routeTimer);
+    if (app.mode !== 'patterns' || app.startFrom !== 'now' || !app.sel || !app.physical) { renderPatternDetail(); return; }
+    const key = routeKey();
+    if (app.route && app.route.key === key && (app.route.status === 'ready' || app.route.status === 'loading')) { renderPatternDetail(); return; }
+    const from = app.physical.state.slice(), picture = app.sel.state.slice(), seq = ++routeSeq;
+    if (Fast.getStatus() !== 'ready') { app.route = { key, status: 'waiting' }; renderPatternDetail(); return; }
+    let plan;
+    try {
+      plan = Pat.planRoute(from, picture);
+    } catch (err) {
+      app.route = { key, status: 'error', message: err.message };
+      renderPatternDetail();
+      return;
+    }
+    app.route = { key, status: 'loading', plan, from };
+    renderPatternDetail();
+    routeTimer = setTimeout(async () => {
+      try {
+        const moves = (await Fast.solve(plan.input)).map(st => st.move);
+        if (seq !== routeSeq) return;
+        if (!Pat.checkRoute(from, plan, moves)) throw new Error('the route did not reach the pattern');
+        app.route = { key, status: 'ready', plan, from, moves };
+      } catch (err) {
+        if (seq !== routeSeq) return;
+        app.route = {
+          key, status: 'error',
+          message: err.code === 'SOLVER_RESTARTING'
+            ? 'The route finder stopped and is restarting. Pick the pattern again in a few seconds.'
+            : `Couldn't find a route (${err.message}). Please report this cube code: ${M.toFaceletString(from)}`,
+        };
+      }
+      renderPatternDetail();
+    }, 150);
+  }
+  function renderPatternDetail() {
+    const sel = app.sel;
+    renderHold(app.startFrom === 'now' && app.physical ? app.physical.state : M.SOLVED);
+    $('pd-empty').hidden = !!sel;
+    $('pd-body').hidden = !sel;
+    if (!sel) return;
+    $('pd-name').textContent = sel.name;
+    $('pd-alias').textContent = sel.aliasText || '';
+    $('pd-alg').textContent = sel.moves.join(' ');
+    $('from-solved-info').textContent = `${sel.moves.length} moves from a solved cube`;
+    const nowOk = !!app.physical;
+    if (!nowOk && app.startFrom === 'now') app.startFrom = 'solved';
+    $('from-now').disabled = !nowOk;
+    $('from-now-info').textContent = nowOk ? 'Direct route, about 20 turns' : 'Enter and check your cube in Solve first';
+    $('from-solved').checked = app.startFrom === 'solved';
+    $('from-now').checked = app.startFrom === 'now';
+    $('pd-now').hidden = app.startFrom !== 'now';
+    let status = '', canShow = true;
+    if (app.startFrom === 'now') {
+      paintNet(nowCells, app.physical.state, null);
+      $('now-label').textContent = `My cube now: ${app.physical.label}. If your real cube looks different, switch to Solve and paint it.`;
+      const r = app.route, st = Fast.getStatus();
+      canShow = false;
+      if (st === 'failed') status = "The route finder couldn't load. Start from a solved cube instead.";
+      else if (!r || r.key !== routeKey() || r.status === 'waiting') status = st === 'ready' ? 'Finding the shortest route…' : 'Preparing solver…';
+      else if (r.status === 'loading') status = 'Finding the shortest route…';
+      else if (r.status === 'error') status = r.message;
+      else if (!r.moves.length) status = 'Your cube already shows this pattern.';
+      else { status = `Route found: ${r.moves.length} turns.`; canShow = true; }
+    }
+    $('route-status').textContent = status;
+    $('btn-show').disabled = !canShow;
+  }
+  function showMe() {
+    const sel = app.sel;
+    if (!sel) return;
+    let start, moves, kind;
+    if (app.startFrom === 'solved') {
+      start = M.SOLVED; moves = sel.moves; kind = 'solved';
+    } else {
+      if (!app.route || app.route.status !== 'ready' || app.route.key !== routeKey()) return;
+      start = app.route.from; moves = app.route.moves; kind = 'route';
+    }
+    const { states, steps } = Pat.patternSteps({ name: sel.name, start, moves, kind });
+    startPlayback({ states, steps, kind: 'pattern', method: 'fast', name: sel.name, picture: sel.state });
+  }
+
+  // ---------- playback ----------
+  function startPlayback(play) {
+    app.play = { kind: play.kind, method: play.method, name: play.name, picture: play.picture };
+    showPanel('play');
+    $('btn-edit').textContent = play.kind === 'pattern' ? '← Patterns' : '← Edit cube';
+    if (app.view) app.view.resetView();
+    player.load(play.states, play.steps);
+    buildMoveList(play.steps);
+    renderPlay(player);
+    // Phones: bring the step card up under the sticky cube; controls stick to the bottom.
+    if (narrow()) $('card').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+    else window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
+  function backFromPlay() {
     player.afterTurn(() => {
-      $('play-panel').hidden = true;
-      $('input-panel').hidden = false;
-      document.body.classList.remove('is-playing');
+      if (app.play.kind === 'pattern') { enterPatterns(); return; }
+      showPanel('input');
       renderInput();
     });
   }
@@ -236,7 +436,7 @@
       if (st.stage !== stage) {
         stage = st.stage;
         const sec = document.createElement('div');
-        if (app.playMethod === 'beginner') {
+        if (app.play.kind === 'solve' && app.play.method === 'beginner') {
           const h = document.createElement('h3');
           h.textContent = st.stage === 0 ? st.stageName : `${st.stage}. ${st.stageName}`;
           sec.appendChild(h);
@@ -263,7 +463,7 @@
     name.className = 'name';
     name.textContent = step.algLen > 1 ? `${step.algName} · move ${step.algPos + 1} of ${step.algLen}` : step.algName;
     el.appendChild(name);
-    if (step.algLen < 2) return;
+    if (step.algLen < 2 || step.algLen > 30) return;
     step.alg.split(' ').forEach((m, k) => {
       const span = document.createElement('span');
       span.className = 'm' + (k < step.algPos ? ' done' : k === step.algPos ? ' now' : '');
@@ -271,29 +471,41 @@
       el.appendChild(span);
     });
   }
+  function physicalLabel(pos, total) {
+    const what = app.play.kind === 'pattern' ? app.play.name : 'your solve';
+    if (pos === 0) return app.play.kind === 'pattern' ? `Start of ${what}` : 'Your checked cube';
+    if (pos >= total) return `End of ${what}`;
+    return `After turn ${pos} of ${total} · ${what}`;
+  }
   function renderPlay(p) {
     if ($('play-panel').hidden) return;
     const total = p.steps.length, pos = p.pos, cur = p.states[pos], step = p.steps[pos];
-    if (app.view && !p.busy) app.view.setState(cur);
+    const pattern = app.play.kind === 'pattern';
+    if (!p.busy) {
+      if (app.view) app.view.setState(cur);
+      setPhysical(cur, physicalLabel(pos, total));
+    }
     $('counter').textContent = total ? (step ? `Turn ${pos + 1} of ${total}` : `Done · ${total} turns`) : '';
     $('progress-bar').style.width = total ? `${(pos / total) * 100}%` : '100%';
     renderHold(cur);
     paintNet(miniCells, cur, null);
     $('card').classList.toggle('finished', !step);
     if (!step) {
+      const hint = pattern ? D.pictureHint(cur, app.play.picture) : '';
       $('card-stage').textContent = total ? 'Finished' : 'Nothing to do';
-      $('card-move').textContent = 'Solved';
-      $('card-title').textContent = total ? `${total} turns` : 'Already solved';
-      $('card-detail').textContent = total
-        ? 'Your cube should now be solved. Use back or the turn list to review any turn.'
-        : 'This cube is already solved. Go back and enter a scrambled cube.';
+      $('card-move').textContent = pattern ? 'Done' : 'Solved';
+      $('card-title').textContent = pattern ? app.play.name : total ? `${total} turns` : 'Already solved';
+      $('card-detail').textContent = pattern
+        ? `${hint || 'Your cube now shows the pattern.'} Pick another pattern to go straight there, or switch to Solve to solve it back.`
+        : total ? 'Your cube should now be solved. Use back or the turn list to review any turn.'
+          : 'This cube is already solved. Go back and enter a scrambled cube.';
       $('card-alg').textContent = '';
       $('card-note').hidden = true;
     } else {
       const d = D.describeMove(step.move);
-      $('card-stage').textContent = app.playMethod === 'beginner'
-        ? (step.stage === 0 ? 'Before you start' : `Stage ${step.stage} of 7 · ${step.stageName}`)
-        : 'Next turn';
+      $('card-stage').textContent = pattern ? `Pattern · ${app.play.name}`
+        : app.play.method === 'beginner' ? (step.stage === 0 ? 'Before you start' : `Stage ${step.stage} of 7 · ${step.stageName}`)
+          : 'Next turn';
       $('card-move').textContent = step.move;
       $('card-title').textContent = d.title;
       $('card-detail').textContent = d.detail;
@@ -339,6 +551,8 @@
     }
   }
   function wire() {
+    $('mode-solve').addEventListener('click', () => { if (app.mode !== 'solve' || $('input-panel').hidden) setMode('solve'); });
+    $('mode-patterns').addEventListener('click', () => { if (app.mode !== 'patterns' || $('pattern-panel').hidden) setMode('patterns'); });
     $('net').addEventListener('click', e => {
       const label = e.target.closest('.face-label');
       if (label) { app.face = label.dataset.face; renderFace(); return; }
@@ -356,7 +570,7 @@
       if (el) paint(M.FACES.indexOf(app.face) * 9 + Number(el.dataset.k));
     });
     $('btn-example').addEventListener('click', loadExample);
-    $('btn-solved').addEventListener('click', () => setInputState(M.SOLVED.slice(), ''));
+    $('btn-solved').addEventListener('click', () => setInputState(M.SOLVED, ''));
     $('btn-clear').addEventListener('click', () => setInputState(
       app.state.map((c, i) => (i % 9 === 4 ? c : 'x')), 'Cleared. Centers are kept; paint every other sticker.'));
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
@@ -364,7 +578,24 @@
       renderSolveButton();
     }));
     $('btn-solve').addEventListener('click', solve);
-    $('btn-edit').addEventListener('click', backToEdit);
+
+    $('pattern-search').addEventListener('input', filterGallery);
+    $('custom-alg').addEventListener('input', () => { clearTimeout(customTimer); customTimer = setTimeout(onCustomInput, 250); });
+    $('gallery').addEventListener('click', e => {
+      const card = e.target.closest('.pcard');
+      if (!card) return;
+      const entry = Pat.entries()[Number(card.dataset.index)];
+      selectPattern({ index: entry.index, name: entry.name, moves: entry.moves, state: entry.state, custom: false,
+        aliasText: entry.aliases.length ? `Also called ${entry.aliases.join(', ')}` : '' });
+    });
+    document.querySelectorAll('input[name="from"]').forEach(r => r.addEventListener('change', () => {
+      app.startFrom = r.value;
+      renderPatternDetail();
+      requestRoute();
+    }));
+    $('btn-show').addEventListener('click', showMe);
+
+    $('btn-edit').addEventListener('click', backFromPlay);
     $('btn-reset-view').addEventListener('click', () => { if (app.view) app.view.resetView(); });
     $('btn-restart').addEventListener('click', () => player.jump(0));
     $('btn-prev').addEventListener('click', () => player.back());
@@ -383,7 +614,7 @@
         else if (e.key === 'ArrowLeft') { e.preventDefault(); player.back(); }
         else if (e.key === 'Home') { e.preventDefault(); player.jump(0); }
         else if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); player.togglePlay(); }
-      } else if (PALETTE.includes(e.key.toLowerCase())) {
+      } else if (!$('input-panel').hidden && PALETTE.includes(e.key.toLowerCase())) {
         selectColor(e.key.toLowerCase());
       }
     });
@@ -393,6 +624,7 @@
     selectColor('w');
     netCells = buildNet($('net'), true);
     miniCells = buildNet($('mini-net'), false);
+    nowCells = buildNet($('now-net'), false);
     buildEditor();
     initView();
     player = P.createPlayer({
@@ -401,9 +633,13 @@
     });
     player.setSpeed(Number($('speed').value));
     renderSpeed();
+    renderModeSwitch();
     wire();
     loadExample();
-    Fast.onStatus(renderSolveButton);
+    Fast.onStatus(() => {
+      renderSolveButton();
+      if (app.mode === 'patterns' && !$('pattern-panel').hidden) requestRoute();
+    });
     Fast.init();
   }
   boot();
