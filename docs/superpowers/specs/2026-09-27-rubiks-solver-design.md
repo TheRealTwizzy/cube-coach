@@ -68,7 +68,9 @@ Messages explain likely cause (misread sticker vs. reassembled cube) and name fa
 
 ## Shortest solver (`js/fast.js`)
 
-- `FastSolver.init()` runs `Cube.initSolver()` after first paint (setTimeout); status `loading|ready|failed`.
+- `FastSolver.init()` builds cubejs tables in a Web Worker (blob URL, `importScripts` from jsDelivr) so the
+  page never freezes; if workers are unavailable, falls back to `Cube.initSolver()` on the main thread after
+  first paint. Status `idle|loading|ready|failed`.
 - `FastSolver.solve(state)` → array of moves in white-Up/green-Front frame via
   `Cube.fromString(toFaceletString(state)).solve()`. Solved input → empty array.
 - Each move annotated `{move, stage: null, label: "Shortest solve"}`.
