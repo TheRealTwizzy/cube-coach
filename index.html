@@ -28,7 +28,7 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { background: var(--ground); color: var(--ink); font: 16px/1.5 var(--font-body); padding-inline: 16px; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font: 16px/1.5 var(--font-body); padding-inline: 16px; }
   button { font: inherit; color: inherit; }
   code { font-family: var(--font-mono); font-size: .92em; }
   .wrap { max-width: 1180px; margin-inline: auto; padding-block: 20px 48px; display: grid; gap: 20px; }
@@ -75,7 +75,8 @@
   .swatch kbd { position: absolute; right: 3px; bottom: 3px; padding: 0 3px; border-radius: 3px; background: rgba(255,255,255,.8);
     color: #15181d; font: 600 10px/1.4 var(--font-mono); }
 
-  .net { --s: clamp(22px, 6vw, 34px); display: grid; grid-template-columns: repeat(4, max-content); gap: 6px; }
+  /* Net width = 12 stickers + 66px of gaps; the page keeps 32px of gutters (+ a little slack). */
+  .net { --s: clamp(18px, calc((100vw - 104px) / 12), 34px); display: grid; grid-template-columns: repeat(4, max-content); gap: 6px; }
   .net.mini { --s: 13px; gap: 3px; }
   .face { display: grid; gap: 4px; align-content: end; }
   .face-label { justify-self: start; padding: 0; border: 0; background: none; font: 600 11px/1 var(--font-mono);
@@ -99,6 +100,19 @@
   .editor-grid { --e: clamp(56px, 17vw, 64px); display: grid; grid-template-columns: repeat(3, var(--e)); gap: 5px;
     padding: 5px; border-radius: 12px; background: var(--plastic); }
   .editor-grid .st { width: var(--e); height: var(--e); border-radius: 8px; }
+  .paint { display: grid; gap: 12px; min-width: 0; }
+  .section > * { min-width: 0; }
+  #btn-scan { justify-self: start; }
+  .scan { display: grid; gap: 12px; }
+  #scan-take { justify-self: start; }
+  .scan-photo { position: relative; justify-self: start; width: 100%; max-width: 480px; touch-action: none; }
+  .scan-photo canvas { display: block; width: 100%; height: auto; border-radius: 10px; }
+  .scan-handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid #fff; border-radius: 50%;
+    background: rgba(29, 78, 216, .35); box-shadow: 0 0 0 2px rgba(0,0,0,.5); cursor: grab; touch-action: none; }
+  .scan-read { display: grid; grid-template-columns: repeat(3, 28px); gap: 3px; padding: 3px; border-radius: 6px; background: var(--plastic); justify-self: start; }
+  .scan-read span { width: 28px; height: 28px; border-radius: 4px; background: var(--c); }
+  #scan-net .st { background: var(--c, var(--c-x)); }
+  .st.check { outline: 3px dashed var(--danger); outline-offset: 1px; }
   .hint b { font-weight: 600; }
 
   .methods { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -237,7 +251,25 @@
     <section class="panel" id="cube-panel" aria-label="My Cube">
       <div class="section">
         <h2 tabindex="-1"><span class="n">1</span>Paint your cube</h2>
-        <p class="tip">Make this cube match the one in your hands. Tap a face name to see how to hold the cube while you read that face.</p>
+        <p class="tip">Make this cube match the one in your hands: scan it with your camera, or paint it. Tap a face name to see how to hold the cube while you read that face.</p>
+        <button class="btn primary" id="btn-scan" type="button">Scan my cube</button>
+        <div class="scan" id="scan-area" hidden>
+          <div class="prow"><strong class="plabel" id="scan-step"></strong><button class="btn" id="scan-cancel" type="button">Cancel scan</button></div>
+          <p class="hint" id="scan-hold"></p>
+          <button class="btn primary" id="scan-take" type="button">Take photo</button>
+          <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
+          <div class="scan-photo" id="scan-photo" hidden>
+            <canvas id="scan-canvas"></canvas>
+          </div>
+          <p class="status" id="scan-msg" aria-live="polite"></p>
+          <div class="scan-read" id="scan-read" hidden></div>
+          <div class="row" id="scan-actions" hidden>
+            <button class="btn" id="scan-retake" type="button">Retake</button>
+            <button class="btn primary" id="scan-ok" type="button">Looks right</button>
+          </div>
+          <div class="net mini" id="scan-net"></div>
+        </div>
+        <div class="paint" id="paint-area">
         <div class="palette" id="palette" role="group" aria-label="Sticker color"></div>
         <div class="net" id="net"></div>
         <div class="editor">
@@ -251,6 +283,7 @@
           <button class="btn" id="btn-example" type="button">Example</button>
           <button class="btn" id="btn-solved" type="button">Solved cube</button>
           <button class="btn" id="btn-clear" type="button">Clear</button>
+        </div>
         </div>
         <p class="tip" id="scramble-note"></p>
       </div>
@@ -358,6 +391,8 @@
 <script src="js/describe.js"></script>
 <script src="js/patterns.js"></script>
 <script src="js/session.js"></script>
+<script src="js/vision.js"></script>
+<script src="js/scan.js"></script>
 <script src="js/player.js"></script>
 <script src="js/fast.js"></script>
 <script src="js/beginner.js"></script>

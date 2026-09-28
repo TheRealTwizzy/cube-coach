@@ -11,6 +11,8 @@
   const P = window.CubePlayer;
   const Pat = window.CubePatterns;
   const S = window.CubeSession;
+  const Vis = window.CubeVision;
+  const ScanLib = window.CubeScan;
 
   const NAMES = D.NAMES;
   const FACE_WORD = D.FACE_WORD;
@@ -32,11 +34,11 @@
     cube: blankCube(),  // My Cube: the digital twin of the cube in the user's hands
     cubeLabel: '',      // where My Cube's current state came from, e.g. "End of Superflip"
     confirmed: false,   // the user confirmed My Cube and it is a real, solvable cube
-    color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false, view: null,
+    color: 'w', face: 'F', bad: new Set(), check: new Set(), method: 'fast', busy: false, view: null,
     play: { kind: 'solve', method: 'fast', name: '', picture: null, relabeled: false, custom: false },
     sel: null,          // selected pattern { index?, name, moves, state, custom, aliasText }
   };
-  let netCells = [], miniCells = [], editorCells = [], solveCells = [], player = null;
+  let netCells = [], miniCells = [], editorCells = [], solveCells = [], scanCells = [], player = null;
   let galleryBuilt = false, customTimer = null;
   const routes = S.createRouteRequester({
     getStatus: () => Fast.getStatus(),
@@ -134,15 +136,16 @@
     });
     return cells;
   }
-  function paintCell(el, i, state, bad) {
+  function paintCell(el, i, state, bad, check) {
     el.style.setProperty('--c', `var(--c-${state[i]})`);
     el.classList.toggle('bad', !!(bad && bad.has(i)));
+    el.classList.toggle('check', !!(check && check.has(i)));
     if (el.tagName === 'BUTTON') {
       const f = M.FACELETS[i];
       el.setAttribute('aria-label', `${FACE_WORD[f.face]} face, row ${f.row + 1}, column ${f.col + 1}: ${NAMES[state[i]]}`);
     }
   }
-  const paintNet = (cells, state, bad) => cells.forEach((el, i) => paintCell(el, i, state, bad));
+  const paintNet = (cells, state, bad, check) => cells.forEach((el, i) => paintCell(el, i, state, bad, check));
   function renderHold(state) {
     const up = M.centerColor(state, 'U'), front = M.centerColor(state, 'F');
     $('hold').innerHTML = `Hold: <i class="dot" style="--c:var(--c-${up})"></i>${NAMES[up]} on top ` +
@@ -163,7 +166,7 @@
   }
   function renderFace() {
     const fi = M.FACES.indexOf(app.face);
-    editorCells.forEach((el, k) => paintCell(el, fi * 9 + k, app.cube, app.bad));
+    editorCells.forEach((el, k) => paintCell(el, fi * 9 + k, app.cube, app.bad, app.check));
     $('editor-title').textContent = `${FACE_WORD[app.face]} face · ${colorName(app.cube, app.face)} center`;
     $('hint').innerHTML = `<b>How to hold the cube for the ${FACE_WORD[app.face].toLowerCase()} face.</b> ` + D.faceHint(app.face, app.cube);
     document.querySelectorAll('#net .face').forEach(el => el.classList.toggle('active', el.dataset.face === app.face));
@@ -187,7 +190,7 @@
     document.querySelectorAll('.swatch').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color === c)));
   }
   function renderCube() {
-    paintNet(netCells, app.cube, app.bad);
+    paintNet(netCells, app.cube, app.bad, app.check);
     renderFace();
     renderHold(app.cube);
     if (app.view && visible('cube')) app.view.setState(app.cube);
@@ -209,6 +212,7 @@
     app.cube = app.cube.slice();
     app.cube[i] = app.color;
     app.bad.delete(i);
+    app.check.delete(i);
     unconfirm();
     renderCube();
   }
@@ -222,6 +226,7 @@
     if (app.busy) return;
     app.cube = next.slice();
     app.bad = new Set();
+    app.check = new Set();
     unconfirm();
     renderErrors([]);
     setNote(note || '');
@@ -261,6 +266,167 @@
     }
     renderModeSwitch();
     renderCube();
+  }
+
+  // ---------- scanning (one photo per face; the camera is opened through a file input) ----------
+  let scan = null, shot = null, dragging = -1;
+  function startScan() {
+    scan = ScanLib.createScan();
+    shot = null;
+    $('btn-scan').hidden = true;
+    $('paint-area').hidden = true;
+    $('scan-area').hidden = false;
+    $('scan-msg').textContent = '';
+    renderScan();
+    $('scan-take').focus({ preventScroll: true });
+  }
+  function endScan() {
+    scan = null;
+    shot = null;
+    $('scan-file').value = '';
+    $('scan-area').hidden = true;
+    $('paint-area').hidden = false;
+    $('btn-scan').hidden = false;
+  }
+  function renderScan() {
+    if (!scan) return;
+    const step = scan.step();
+    if (!step) { finishScan(); return; }
+    $('scan-step').textContent = `Photo ${step.index + 1} of ${step.total} · ${FACE_WORD[step.face]} face`;
+    $('scan-hold').textContent = `${step.instruction} Fill most of the photo with that face.`;
+    $('scan-take').hidden = !!shot;
+    $('scan-photo').hidden = !shot;
+    $('scan-read').hidden = !shot;
+    $('scan-actions').hidden = !shot;
+    scanCells.forEach((el, i) => {
+      const s = scan.faces[M.FACES[Math.floor(i / 9)]];
+      el.style.setProperty('--c', s ? `rgb(${s[i % 9].rgb.map(Math.round).join(',')})` : 'var(--c-x)');
+    });
+  }
+  function loadImage(file) {
+    if (window.createImageBitmap) return createImageBitmap(file).catch(() => loadImageElement(file));
+    return loadImageElement(file);
+  }
+  function loadImageElement(file) {
+    return new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error('That file is not a photo this browser can read.'));
+      im.src = URL.createObjectURL(file);
+    });
+  }
+  async function onPhoto(file) {
+    if (!file || !scan) return;
+    let source;
+    try {
+      source = await loadImage(file);
+    } catch (err) {
+      $('scan-msg').textContent = err.message;
+      return;
+    }
+    const canvas = $('scan-canvas'), s = Math.min(1, 480 / Math.max(source.width, source.height));
+    canvas.width = Math.round(source.width * s);
+    canvas.height = Math.round(source.height * s);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const found = Vis.findFace(img), q = Vis.quality(img);
+    shot = { img, corners: found.corners };
+    const msgs = [];
+    if (found.method === 'none') msgs.push("Couldn't find the face. Drag the 4 corners onto the face's corners.");
+    else if (found.method === 'body') msgs.push('Check that the grid lines up with the stickers, and drag the corners if not.');
+    if (q.dark) msgs.push('The photo is quite dark; more light gives truer colors.');
+    else if (q.blurry && found.method !== 'none') msgs.push('The photo looks blurry. If the colors below look wrong, retake it.');
+    $('scan-msg').textContent = msgs.join(' ');
+    buildHandles();
+    resample();
+    renderScan();
+  }
+  function drawShot() {
+    const canvas = $('scan-canvas'), ctx = canvas.getContext('2d'), H = Vis.homography(shot.corners);
+    ctx.putImageData(shot.img, 0, 0);
+    const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...H(...a)); ctx.lineTo(...H(...b)); ctx.stroke(); };
+    [['rgba(0,0,0,.6)', 4], ['#fff', 2]].forEach(([color, width]) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      for (let t = 0; t <= 3; t++) { line([t / 3, 0], [t / 3, 1]); line([0, t / 3], [1, t / 3]); }
+    });
+    document.querySelectorAll('#scan-photo .scan-handle').forEach((h, k) => {
+      h.style.left = `${(shot.corners[k][0] / canvas.width) * 100}%`;
+      h.style.top = `${(shot.corners[k][1] / canvas.height) * 100}%`;
+    });
+  }
+  function resample() {
+    shot.samples = Vis.sampleFace(shot.img, shot.corners);
+    drawShot();
+    const read = $('scan-read');
+    read.textContent = '';
+    shot.samples.forEach(s => {
+      const cell = document.createElement('span');
+      cell.style.setProperty('--c', `rgb(${s.rgb.map(Math.round).join(',')})`);
+      read.appendChild(cell);
+    });
+  }
+  const CORNER_NAMES = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
+  function buildHandles() {
+    const box = $('scan-photo');
+    if (box.querySelector('.scan-handle')) return;
+    CORNER_NAMES.forEach((name, k) => {
+      const h = document.createElement('div');
+      h.className = 'scan-handle';
+      h.tabIndex = 0;
+      h.setAttribute('role', 'slider');
+      h.setAttribute('aria-label', `Face corner, ${name}. Arrow keys move it.`);
+      const moveTo = (x, y) => {
+        const canvas = $('scan-canvas');
+        shot.corners[k] = [Math.max(0, Math.min(canvas.width, x)), Math.max(0, Math.min(canvas.height, y))];
+        drawShot();
+      };
+      h.addEventListener('pointerdown', e => { e.preventDefault(); dragging = k; h.setPointerCapture(e.pointerId); });
+      h.addEventListener('pointermove', e => {
+        if (dragging !== k || !shot) return;
+        const canvas = $('scan-canvas'), r = canvas.getBoundingClientRect();
+        moveTo((e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height);
+      });
+      const drop = () => { if (dragging === k && shot) resample(); dragging = -1; };
+      h.addEventListener('pointerup', drop);
+      h.addEventListener('pointercancel', drop);
+      h.addEventListener('keydown', e => {
+        const d = { ArrowLeft: [-3, 0], ArrowRight: [3, 0], ArrowUp: [0, -3], ArrowDown: [0, 3] }[e.key];
+        if (!d || !shot) return;
+        e.preventDefault();
+        moveTo(shot.corners[k][0] + d[0], shot.corners[k][1] + d[1]);
+        resample();
+      });
+      box.appendChild(h);
+    });
+  }
+  function retakePhoto() {
+    shot = null;
+    $('scan-file').value = '';
+    $('scan-msg').textContent = '';
+    renderScan();
+    $('scan-take').focus({ preventScroll: true });
+  }
+  function acceptPhoto() {
+    const step = scan.step();
+    if (!step || !shot) return;
+    scan.setFace(step.face, shot.samples);
+    const dup = scan.duplicateCenters().find(d => d.second === step.face);
+    if (dup) scan.redo(step.face);
+    retakePhoto();
+    if (dup) $('scan-msg').textContent = dup.message;
+  }
+  function finishScan() {
+    const { state, uncertain } = scan.result();
+    endScan();
+    const n = uncertain.length;
+    setCube(state, n
+      ? `Scanned. ${n} sticker${n === 1 ? '' : 's'} I wasn't sure about ${n === 1 ? 'is' : 'are'} outlined with dashes: check ${n === 1 ? 'it' : 'them'} against your cube, then press "This is my cube".`
+      : 'Scanned. Check it against your cube, then press "This is my cube".');
+    app.check = new Set(uncertain);
+    renderCube();
+    document.querySelector('#cube-panel h2').focus({ preventScroll: true });
   }
 
   // ---------- Solve ----------
@@ -602,6 +768,12 @@
     $('btn-clear').addEventListener('click', () => setCube(
       app.cube.map((c, i) => (i % 9 === 4 ? c : 'x')), 'Cleared. Centers are kept; paint every other sticker.'));
     $('btn-confirm').addEventListener('click', confirmCube);
+    $('btn-scan').addEventListener('click', startScan);
+    $('scan-take').addEventListener('click', () => $('scan-file').click());
+    $('scan-file').addEventListener('change', e => onPhoto(e.target.files && e.target.files[0]));
+    $('scan-retake').addEventListener('click', retakePhoto);
+    $('scan-ok').addEventListener('click', acceptPhoto);
+    $('scan-cancel').addEventListener('click', () => { endScan(); $('btn-scan').focus({ preventScroll: true }); });
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
       app.method = r.value;
       renderSolveButton();
@@ -650,6 +822,7 @@
     netCells = buildNet($('net'), true);
     miniCells = buildNet($('mini-net'), false);
     solveCells = buildNet($('solve-net'), false);
+    scanCells = buildNet($('scan-net'), false);
     buildEditor();
     initView();
     player = P.createPlayer({
