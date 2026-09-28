@@ -112,3 +112,65 @@ test('quality flags dark and blurry photos', () => {
   assert.equal(V.quality(dark).dark, true);
   assert.equal(V.quality(boxBlur(sharp, 5)).blurry, true);
 });
+
+function findRate(n, make) {
+  let ok = 0;
+  const misses = [];
+  for (let k = 0; k < n; k++) {
+    const { img, truth, size } = make(k);
+    const found = V.findFace(img);
+    const err = cornerError(found.corners, truth, size);
+    if (found.method === 'grid' && err < 0.05) ok++;
+    else misses.push(`${k}: ${found.method} ${err.toFixed(2)}`);
+  }
+  return { ok, misses: misses.join('; ') };
+}
+const mixedColors = rng => Array.from({ length: 9 }, () => SHADES['wygbro'[Math.floor(rng() * 6)]]);
+
+test('findFace handles a face tilted about 35 degrees', () => {
+  const rng = seededRng(61);
+  const r = findRate(10, k => {
+    const size = 150, truth = placeFace({ cx: 200, cy: 150, size, angle: (k % 2 ? 1 : -1) * 0.61 });
+    return { img: renderFace({ corners: truth, stickers: mixedColors(rng), seed: 100 + k }), truth, size };
+  });
+  assert.ok(r.ok >= 9, `${r.ok}/10: ${r.misses}`);
+});
+
+test('findFace picks the face in front, not the top face seen at an angle', () => {
+  const rng = seededRng(62);
+  const r = findRate(10, k => {
+    const size = 160, truth = placeFace({ cx: 200, cy: 235, size, skew: 0.03, rng });
+    const top = [[truth[0][0], truth[0][1] - 0.75 * size], [truth[1][0], truth[1][1] - 0.75 * size], truth[1], truth[0]];
+    const img = renderFace({ width: 400, height: 360, corners: truth, stickers: mixedColors(rng), seed: 200 + k,
+      extra: [{ corners: top, stickers: mixedColors(rng) }] });
+    return { img, truth, size };
+  });
+  assert.ok(r.ok >= 9, `${r.ok}/10: ${r.misses}`);
+});
+
+test('findFace still finds stickers in shade', () => {
+  const rng = seededRng(63);
+  const r = findRate(10, k => {
+    const size = 170, truth = placeFace({ cx: 200, cy: 150, size, angle: (rng() - 0.5) * 0.3 });
+    return { img: renderFace({ corners: truth, stickers: mixedColors(rng).map(c => light(c, 0.5, 0)), seed: 300 + k }), truth, size };
+  });
+  assert.ok(r.ok >= 7, `${r.ok}/10: ${r.misses}`);
+});
+
+test('classify reads red and orange right across photos with very different exposure and white balance', () => {
+  const rng = seededRng(64);
+  let wrong = 0;
+  for (let n = 0; n < 100; n++) {
+    const state = M.applyMoves(M.SOLVED, M.randomScramble(25, rng));
+    const faces = {};
+    M.FACES.forEach((f, fi) => {
+      const exposure = 0.55 + rng() * 0.7, tint = (rng() * 2 - 1) * 0.15;
+      faces[f] = [...Array(9).keys()].map(k => {
+        const rgb = light(SHADES[state[fi * 9 + k]], exposure, tint).map(v => v + (rng() * 2 - 1) * 6);
+        return { rgb, lab: V.rgbToLab(rgb) };
+      });
+    });
+    if (V.classify(faces).colors.join('') !== state.join('')) wrong++;
+  }
+  assert.equal(wrong, 0, `${wrong}/100 cubes misread`);
+});

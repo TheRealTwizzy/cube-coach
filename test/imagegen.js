@@ -10,23 +10,27 @@ const SHADES = { w: [228, 228, 222], y: [236, 206, 38], g: [30, 160, 78], b: [28
 const light = (rgb, exposure, warm) => [rgb[0] * exposure * (1 + warm), rgb[1] * exposure, rgb[2] * exposure * (1 - warm)].map(v => Math.max(0, Math.min(255, v)));
 
 function renderFace(opts) {
-  const { width = 400, height = 300, corners, stickers, seed = 1, background = 'busy', noise = 8, glare = null, gap = 0.1, blur = 0 } = opts;
+  const { width = 400, height = 300, corners, stickers, seed = 1, background = 'busy', noise = 8, glare = null, gap = 0.1, blur = 0, extra = [] } = opts;
   const rng = seededRng(seed);
   const data = new Uint8ClampedArray(width * height * 4);
   const rects = background === 'busy'
     ? Array.from({ length: 14 }, () => ({ x: rng() * width, y: rng() * height, w: 15 + rng() * 110, h: 15 + rng() * 80, c: [rng() * 255, rng() * 255, rng() * 255] }))
     : [];
-  const toFace = V.homographyMatrix(corners, UNIT);
+  // The main face first, then any other visible faces (e.g. the top face seen at an angle).
+  const faces = [{ corners, stickers, glare }].concat(extra).map(f => Object.assign({}, f, { toFace: V.homographyMatrix(f.corners, UNIT) }));
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      let c;
-      const [u, v] = V.applyH(toFace, x + 0.5, y + 0.5);
-      if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+      let c, u, v, face = null;
+      for (const f of faces) {
+        [u, v] = V.applyH(f.toFace, x + 0.5, y + 0.5);
+        if (u >= 0 && u <= 1 && v >= 0 && v <= 1) { face = f; break; }
+      }
+      if (face) {
         const cu = u * 3, cv = v * 3, i = Math.min(2, Math.floor(cu)), j = Math.min(2, Math.floor(cv));
         const fu = cu - i, fv = cv - j, cell = j * 3 + i;
         const inSticker = fu > gap && fu < 1 - gap && fv > gap && fv < 1 - gap;
-        c = inSticker ? stickers[cell] : [16, 16, 18];
-        if (inSticker && glare && glare.cell === cell && Math.hypot(fu - 0.45, fv - 0.4) < glare.r) c = [255, 255, 255];
+        c = inSticker ? face.stickers[cell] : [16, 16, 18];
+        if (inSticker && face.glare && face.glare.cell === cell && Math.hypot(fu - 0.45, fv - 0.4) < face.glare.r) c = [255, 255, 255];
       } else if (background === 'dark') {
         c = [30, 30, 34];
       } else if (background === 'plain') {

@@ -42,15 +42,22 @@ test('redo sends the next step back to that face', () => {
   assert.equal(s.done(), false);
 });
 
-test('a face photographed twice is caught with a retake message', () => {
+test("each photo's center is checked against the face asked for", () => {
   const rng = seededRng(3), s = Scan.createScan();
-  s.setFace('F', samplesOf(M.SOLVED, 'F', rng));
-  s.setFace('R', samplesOf(M.SOLVED, 'R', rng));
-  s.setFace('B', samplesOf(M.SOLVED, 'B', rng));
-  s.setFace('L', samplesOf(M.SOLVED, 'R', rng)); // red face again instead of orange
-  const dup = s.duplicateCenters();
-  assert.equal(dup.length, 1);
-  assert.equal(dup[0].message, 'Photos 2 and 4 both have a red center. Retake photo 4 showing the orange face.');
+  let wrongCalls = 0;
+  for (let n = 0; n < 50; n++) {
+    for (const f of Scan.ORDER) {
+      const fi = M.FACES.indexOf(f), exposure = 0.55 + rng() * 0.7, tint = (rng() * 2 - 1) * 0.15;
+      const samples = [...Array(9).keys()].map(() => {
+        const rgb = light(SHADES[M.SOLVED[fi * 9 + 4]], exposure, tint);
+        return { rgb, lab: V.rgbToLab(rgb) };
+      });
+      if (s.checkCenter(f, samples)) wrongCalls++;
+    }
+  }
+  assert.equal(wrongCalls, 0, 'correct faces are never rejected');
+  const orange = samplesOf(M.SOLVED, 'L', rng);
+  assert.equal(s.checkCenter('R', orange), "Photo 2's center looks orange, but this step needs the red face.");
 });
 
 test('six photos give back the scrambled cube', () => {

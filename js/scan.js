@@ -11,7 +11,6 @@
   'use strict';
 
   const ORDER = ['F', 'R', 'B', 'L', 'U', 'D'];
-  const SAME_CENTER = 12; // weighted color distance under which two centers count as the same color
 
   function createScan() {
     const faces = {};
@@ -27,16 +26,11 @@
       setFace(face, samples) { faces[face] = samples; },
       redo(face) { delete faces[face]; },
       done: () => ORDER.every(f => faces[f]),
-      // Two photos whose centers are the same color: the later one shows the wrong face.
-      duplicateCenters() {
-        const out = [], taken = ORDER.filter(f => faces[f]);
-        taken.forEach((a, i) => taken.slice(i + 1).forEach(b => {
-          if (V.distance(faces[a][4].lab, faces[b][4].lab) >= SAME_CENTER) return;
-          const seen = D.NAMES[V.colorLetter(faces[a][4].lab)], wanted = D.NAMES[M.centerColor(M.SOLVED, b)];
-          out.push({ first: a, second: b,
-            message: `Photos ${photoNo(a)} and ${photoNo(b)} both have a ${seen} center. Retake photo ${photoNo(b)} showing the ${wanted} face.` });
-        }));
-        return out;
+      // The center shows which face is in the photo; it must be the face this step asked for.
+      checkCenter(face, samples) {
+        const seen = V.colorLetter(samples[4].lab), wanted = M.centerColor(M.SOLVED, face);
+        if (seen === wanted) return null;
+        return `Photo ${photoNo(face)}'s center looks ${D.NAMES[seen]}, but this step needs the ${D.NAMES[wanted]} face.`;
       },
       result() {
         const { colors, uncertain } = V.classify(faces);

@@ -20,8 +20,13 @@
     const fx = f(x), fy = f(y), fz = f(z);
     return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
   }
-  // Lightness varies between photos far more than hue, so it counts half.
-  const distance = (a, b) => Math.hypot((a[0] - b[0]) * 0.5, a[1] - b[1], a[2] - b[2]);
+  // Photos differ in exposure and white balance, which move lightness and chroma far more than hue;
+  // so hue differences count fully, chroma half and lightness little (keeps red vs orange apart).
+  function distance(a, b) {
+    const c1 = Math.hypot(a[1], a[2]), c2 = Math.hypot(b[1], b[2]);
+    const dH = Math.sqrt(Math.max(0, (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2 - (c1 - c2) ** 2));
+    return Math.hypot((a[0] - b[0]) * 0.3, (c1 - c2) * 0.5, dH);
+  }
   function hsv(data, k) {
     const r = data[k], g = data[k + 1], b = data[k + 2];
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -148,8 +153,10 @@
   }
   function findGrid(img) {
     const { width: w, height: h } = img, total = w * h;
-    const blobs = components(maskOf(img, p => p.v > 0.35 && (p.s > 0.3 || p.v > 0.6)), w, h).filter(b =>
-      b.area > total * 0.001 && b.area < total * 0.12 && b.area / (b.bw * b.bh) > 0.55 && b.bw / b.bh > 0.5 && b.bw / b.bh < 2);
+    // Stickers: bright, or clearly colored even in shade. Fill > 0.45 keeps squares tilted up to ~40 degrees.
+    const sticker = p => p.v > 0.4 || (p.v > 0.35 && p.s > 0.3) || (p.v > 0.2 && p.s > 0.55);
+    const blobs = components(maskOf(img, sticker), w, h).filter(b =>
+      b.area > total * 0.001 && b.area < total * 0.12 && b.area / (b.bw * b.bh) > 0.45 && b.bw / b.bh > 0.5 && b.bw / b.bh < 2);
     let best = null;
     for (const c of blobs) {
       const side = Math.sqrt(c.area);
@@ -183,8 +190,12 @@
       }
       if (matches.length < 7) continue;
       const fit = fitLattice(matches);
-      if (!best || matches.length > best.count || (matches.length === best.count && fit.residual < best.fit.residual)) {
-        best = { count: matches.length, fit };
+      const area = Math.abs(fit.u[0] * fit.v[1] - fit.u[1] * fit.v[0]);
+      const spread = fit.residual / Math.hypot(...fit.u);
+      // Most stickers wins; on a tie prefer the bigger grid (the face in front, not a side seen at an angle).
+      if (!best || matches.length > best.count ||
+        (matches.length === best.count && (area > best.area * 1.1 || (area > best.area / 1.1 && spread < best.spread)))) {
+        best = { count: matches.length, fit, area, spread };
       }
     }
     if (!best) return null;
@@ -267,24 +278,14 @@
     return rowToCol;
   }
   const LETTERS = ['w', 'y', 'g', 'b', 'r', 'o'];
-  const CANON = { w: [240, 240, 240], y: [245, 215, 30], g: [0, 155, 72], b: [0, 70, 173], r: [183, 18, 52], o: [255, 88, 0] };
+  // Typical sticker colors (red and orange as real cubes print them, about 23 degrees of hue apart).
+  const CANON = { w: [240, 240, 240], y: [240, 210, 40], g: [30, 160, 78], b: [28, 78, 185], r: [196, 32, 44], o: [238, 112, 32] };
   const CANON_LAB = LETTERS.map(l => rgbToLab(CANON[l]));
-  function permutations(a) {
-    if (a.length <= 1) return [a];
-    return a.flatMap((x, i) => permutations(a.slice(0, i).concat(a.slice(i + 1))).map(rest => [x].concat(rest)));
-  }
-  const PERMS6 = permutations([0, 1, 2, 3, 4, 5]);
-
   // faces: { U: [9 samples], R: …, … } in net orientation → 54 color letters + uncertain indices.
   function classify(faces) {
     const centers = M.FACES.map(f => faces[f][4].lab);
-    // Name each center with a distinct standard color.
-    let bestPerm = null, bestCost = Infinity;
-    for (const perm of PERMS6) {
-      const cost = perm.reduce((s, letter, fi) => s + distance(centers[fi], CANON_LAB[letter]), 0);
-      if (cost < bestCost) { bestCost = cost; bestPerm = perm; }
-    }
-    const centerLetter = M.FACES.map((f, fi) => LETTERS[bestPerm[fi]]);
+    // Each photo shows the face the user was asked for, so its center names that face's color.
+    const centerLetter = M.FACES.map(f => M.centerColor(M.SOLVED, f));
     // Each sticker goes to one of 6 colors x 9 slots; centers are pinned to their own color.
     const samples = [];
     M.FACES.forEach((f, fi) => faces[f].forEach((s, k) => samples.push({ index: fi * 9 + k, lab: s.lab, center: k === 4 ? fi : -1 })));
@@ -334,11 +335,20 @@
   // Sharp synthetic faces score 850+, heavily blurred ones under 40; used only as a gentle hint.
   const BLUR_LIMIT = 60;
 
-  // The standard color a sample looks most like (for messages such as "a red center").
+  // The standard color a sample looks most like, robust to exposure and white balance: nearly
+  // colorless and light means white (dark colorless is a color in shade); otherwise the nearest hue.
+  const hueOf = lab => Math.atan2(lab[2], lab[1]);
   function colorLetter(lab) {
-    let best = 0;
-    CANON_LAB.forEach((c, i) => { if (distance(lab, c) < distance(lab, CANON_LAB[best])) best = i; });
-    return LETTERS[best];
+    const chroma = Math.hypot(lab[1], lab[2]);
+    if (chroma < 32 && chroma < 0.6 * lab[0]) return 'w';
+    let best = null, bestGap = Infinity;
+    LETTERS.forEach((l, i) => {
+      if (l === 'w') return;
+      const d = Math.abs(hueOf(lab) - hueOf(CANON_LAB[i]));
+      const gap = Math.min(d, 2 * Math.PI - d);
+      if (gap < bestGap) { bestGap = gap; best = l; }
+    });
+    return best;
   }
 
   return { rgbToLab, homographyMatrix, applyH, homography, downscale, findFace, sampleFace, classify, quality, colorLetter, distance };
