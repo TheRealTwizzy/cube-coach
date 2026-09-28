@@ -109,7 +109,8 @@
   .scan-photo { position: relative; justify-self: start; width: 100%; max-width: 480px; overflow-x: clip; }
   #scan-net .face { cursor: pointer; }
   .scan-cam-box { display: grid; gap: 8px; }
-  .scan-cam { position: relative; width: 100%; max-width: 480px; overflow: hidden; border-radius: 10px; background: #000; }
+  /* --ar (the video's width/height, set from app.js) keeps a portrait phone video under half the screen height. */
+  .scan-cam { position: relative; width: min(100%, 480px, calc(50vh * var(--ar, 1))); overflow: hidden; border-radius: 10px; background: #000; }
   .scan-cam video { display: block; width: 100%; height: auto; }
   .scan-cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .scan-steady { width: 100%; max-width: 480px; height: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); }
@@ -267,12 +268,12 @@
           <p class="hint" id="scan-hold"></p>
           <p class="sr-only" id="scan-live" aria-live="polite"></p>
           <div class="scan-cam-box" id="scan-cam-box" hidden>
-            <div class="scan-cam">
+            <p class="status" id="scan-cam-status"></p>
+            <div class="scan-steady" aria-hidden="true"><div id="scan-steady-bar"></div></div>
+            <div class="scan-cam" id="scan-cam">
               <video id="scan-video" playsinline muted autoplay></video>
               <canvas id="scan-overlay" aria-hidden="true"></canvas>
             </div>
-            <div class="scan-steady" aria-hidden="true"><div id="scan-steady-bar"></div></div>
-            <p class="status" id="scan-cam-status"></p>
             <div class="row">
               <button class="btn primary" id="scan-capture" type="button">Capture</button>
               <button class="btn" id="scan-use-photo" type="button">Take a photo instead</button>

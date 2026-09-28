@@ -58,6 +58,7 @@ test("each photo's center is checked against the face asked for", () => {
   assert.equal(wrongCalls, 0, 'correct faces are never rejected');
   const orange = samplesOf(M.SOLVED, 'L', rng);
   assert.equal(s.checkCenter('R', orange), "Photo 2's center looks orange, but this step needs the red face.");
+  assert.equal(s.checkCenter('R', orange, { live: true }), 'The center looks orange, but this step needs the red face.');
 });
 
 test('six photos give back the scrambled cube', () => {

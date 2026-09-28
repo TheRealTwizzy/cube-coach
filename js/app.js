@@ -296,8 +296,8 @@
     $('scan-msg').textContent = '';
     preferLive = true;
     renderScan();
-    $('scan-take').focus({ preventScroll: true });
-    startLive();
+    startLive(); // shows the camera view straight away when a camera may be used
+    $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true });
   }
   function endScan() {
     stopLive();
@@ -321,6 +321,8 @@
     const camOn = !!live && !shot;
     $('scan-hold').textContent = `${step.instruction} ${camOn ? 'Hold that face flat to the camera so it fills most of the view.' : 'Fill most of the photo with that face.'}`;
     $('scan-cam-box').hidden = !camOn;
+    // iOS Safari may pause a video while its box is hidden (during review); resume it on return.
+    if (camOn && live.stream && $('scan-video').paused) $('scan-video').play().catch(() => {});
     $('scan-take').hidden = !!shot || camOn;
     $('scan-photo').hidden = !shot;
     $('scan-read').hidden = !shot;
@@ -452,6 +454,7 @@
   }
   // Cancelling throws the photos away, so with any taken it asks for a second tap.
   function cancelScan() {
+    if (!scan) return;
     const taken = Object.keys(scan.faces).length + (shot ? 1 : 0);
     if (taken && !cancelArmed) {
       $('scan-cancel').textContent = `Discard ${taken} photo${taken === 1 ? '' : 's'}?`;
@@ -478,43 +481,65 @@
   }
 
   // ---------- live camera ----------
+  // A page framed without camera permission (the claude.ai Artifact) can't ask for it at all.
+  function cameraAllowed() {
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return false;
+    const policy = document.permissionsPolicy || document.featurePolicy;
+    return !(policy && policy.allowsFeature && !policy.allowsFeature('camera'));
+  }
+  // `live` exists from the moment the camera is asked for (stream null until it arrives), so the
+  // view shows "Starting the camera…" and stopLive can always stop what it started.
   async function startLive() {
-    if (!scan || live || !preferLive || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    if (!scan || live || !preferLive || !cameraAllowed()) return;
     const mine = ++liveSeq;
+    live = { stream: null, steady: ScanLib.createSteadiness(), work: document.createElement('canvas'), timer: null };
+    resetLiveView('Starting the camera…');
+    renderScan();
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
     } catch (err) {
-      if (mine !== liveSeq || !scan) return;
+      if (mine !== liveSeq) return;
+      live = null;
       preferLive = false;
-      $('scan-msg').textContent = err && err.name === 'NotAllowedError'
-        ? 'Camera access was not allowed, so take a photo of each face instead.'
-        : 'The live camera is not available here, so take a photo of each face instead.';
+      const hadFocus = document.activeElement && $('scan-cam-box').contains(document.activeElement);
+      // Framed pages are refused without the person ever being asked, so say nothing there.
+      $('scan-msg').textContent = window.self !== window.top ? ''
+        : err && err.name === 'NotAllowedError' ? 'Camera access was not allowed, so take a photo of each face instead.'
+          : 'The live camera is not available here, so take a photo of each face instead.';
       renderScan();
+      if (hadFocus) $('scan-take').focus({ preventScroll: true });
       return;
     }
-    if (mine !== liveSeq || !scan || !preferLive) { stream.getTracks().forEach(t => t.stop()); return; }
-    const video = $('scan-video');
-    video.srcObject = stream;
-    try { await video.play(); } catch (e) { /* muted inline video normally plays; frames are read anyway */ }
     if (mine !== liveSeq) { stream.getTracks().forEach(t => t.stop()); return; }
-    live = { stream, steady: ScanLib.createSteadiness(), work: document.createElement('canvas'), timer: setInterval(liveTick, 150) };
-    renderScan();
-    if (!shot) $('scan-capture').focus({ preventScroll: true });
+    live.stream = stream;
+    $('scan-video').srcObject = stream;
+    $('scan-video').play().catch(() => {}); // not awaited: frames are read once the video has them
+    live.timer = setInterval(liveTick, 150);
+    resetLiveView('');
   }
   function stopLive() {
     liveSeq++;
+    $('scan-video').srcObject = null;
     if (!live) return;
     clearInterval(live.timer);
-    live.stream.getTracks().forEach(t => t.stop());
-    $('scan-video').srcObject = null;
+    if (live.stream) live.stream.getTracks().forEach(t => t.stop());
     live = null;
+    resetLiveView('');
+  }
+  function resetLiveView(status) {
+    const o = $('scan-overlay');
+    o.getContext('2d').clearRect(0, 0, o.width, o.height);
+    $('scan-steady-bar').style.width = '0%';
+    setCamStatus(status);
   }
   function liveFrame() {
     const video = $('scan-video');
-    if (!live || video.readyState < 2 || !video.videoWidth) return null;
+    if (!live || !live.stream || video.readyState < 2 || !video.videoWidth) return null;
+    const ar = (video.videoWidth / video.videoHeight).toFixed(3), box = $('scan-cam');
+    if (box.style.getPropertyValue('--ar') !== ar) box.style.setProperty('--ar', ar);
     const s = Math.min(1, 480 / Math.max(video.videoWidth, video.videoHeight));
     const w = Math.round(video.videoWidth * s), h = Math.round(video.videoHeight * s), c = live.work;
     if (c.width !== w) c.width = w;
@@ -532,11 +557,10 @@
     if (!img) return;
     const found = Vis.findFace(img);
     const samples = found.method === 'grid' ? Vis.sampleFace(img, found.corners) : null;
-    const problem = samples ? scan.checkCenter(step.face, samples) : null;
+    const problem = samples ? scan.checkCenter(step.face, samples, { live: true }) : null;
     drawLiveOverlay(img, found, !!samples && !problem);
     const wanted = NAMES[M.centerColor(M.SOLVED, step.face)];
-    setCamStatus(!samples ? `Show the ${wanted} face, flat to the camera and filling most of the view.`
-      : problem ? problem.replace(/^Photo \d+'s center/, 'The center') : 'Hold still…');
+    setCamStatus(!samples ? `Show the ${wanted} face, flat to the camera and filling most of the view.` : problem || 'Hold still…');
     const ready = live.steady.push(found, !!samples && !problem);
     $('scan-steady-bar').style.width = `${live.steady.progress() * 100}%`;
     if (ready) captureLive(img, found);
@@ -556,7 +580,7 @@
   }
   // Capture the current frame (auto when steady, or the Capture button) and review it like a photo.
   function captureLive(img, found) {
-    if (!live || shot || !scan) return;
+    if (!live || !live.stream || shot || !scan) return;
     live.steady.reset();
     $('scan-steady-bar').style.width = '0%';
     img = img || liveFrame();

@@ -27,10 +27,11 @@
       redo(face) { delete faces[face]; },
       done: () => ORDER.every(f => faces[f]),
       // The center shows which face is in the photo; it must be the face this step asked for.
-      checkCenter(face, samples) {
+      // live: worded for the camera view rather than a photo already taken.
+      checkCenter(face, samples, { live = false } = {}) {
         const seen = V.colorLetter(samples[4].lab), wanted = M.centerColor(M.SOLVED, face);
         if (seen === wanted) return null;
-        return `Photo ${photoNo(face)}'s center looks ${D.NAMES[seen]}, but this step needs the ${D.NAMES[wanted]} face.`;
+        return `${live ? 'The center' : `Photo ${photoNo(face)}'s center`} looks ${D.NAMES[seen]}, but this step needs the ${D.NAMES[wanted]} face.`;
       },
       result() {
         const { colors, uncertain } = V.classify(faces);
