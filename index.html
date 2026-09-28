@@ -50,6 +50,9 @@
   #view canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   .no3d { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--muted); }
   .view-note { margin: 0; text-align: center; color: var(--muted); font-size: 13px; }
+  .view-box { position: relative; }
+  .view-reset { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; }
+  .view-reset svg { width: 20px; height: 20px; }
 
   .panel { display: grid; gap: 24px; min-width: 0; }
   .section { display: grid; gap: 12px; min-width: 0; }
@@ -89,6 +92,13 @@
   @keyframes pulse { 50% { outline-color: transparent; } }
 
   .hint { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 15px; max-width: 65ch; }
+  .editor { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+  .editor .hint { flex: 1 1 220px; }
+  .editor-face { display: grid; gap: 6px; }
+  .editor-title { font: 600 12px/1.2 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .editor-grid { --e: clamp(56px, 17vw, 64px); display: grid; grid-template-columns: repeat(3, var(--e)); gap: 5px;
+    padding: 5px; border-radius: 12px; background: var(--plastic); }
+  .editor-grid .st { width: var(--e); height: var(--e); border-radius: 8px; }
   .hint b { font-weight: 600; }
 
   .methods { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -113,6 +123,7 @@
   .card.finished .move { font-family: var(--font-display); text-transform: uppercase; color: var(--c-g); }
   .card .move-title { font: 700 23px/1.15 var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
   .card .detail { margin: 0; color: var(--muted); max-width: 60ch; }
+  .card .note { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-2); font-size: 14px; max-width: 60ch; }
   .alg { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font: 500 15px/1.6 var(--font-mono); }
   .alg:empty { display: none; }
   .alg .name { flex-basis: 100%; font: 600 14px/1.4 var(--font-body); }
@@ -127,6 +138,7 @@
   .icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
   .speed { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 14px; }
   .speed input { width: 120px; accent-color: var(--accent); }
+  .speed output { min-width: 11ch; font: 500 13px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
   .progress { height: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); }
   .progress > div { width: 0; height: 100%; background: var(--accent); transition: width .2s; }
   .moves { position: relative; display: grid; gap: 12px; max-height: 260px; overflow: auto; padding-right: 4px; }
@@ -173,8 +185,12 @@
 
   <main class="layout">
     <section class="viewer" aria-label="3D cube">
-      <div id="view"></div>
-      <p class="view-note">Drag to look around. Double-click to reset the view.</p>
+      <div class="view-box">
+        <div id="view"></div>
+        <button class="icon-btn view-reset" id="btn-reset-view" type="button" aria-label="Reset the view" title="Reset the view">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7.5 6.5 12 11V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
+      </div>
+      <p class="view-note">Drag to look around. The ↺ button puts the view back.</p>
     </section>
 
     <section class="panel" id="input-panel" aria-label="Enter your cube">
@@ -182,7 +198,13 @@
         <h2><span class="n">1</span>Paint your cube</h2>
         <div class="palette" id="palette" role="group" aria-label="Sticker color"></div>
         <div class="net" id="net"></div>
-        <div class="hint" id="hint" aria-live="polite"></div>
+        <div class="editor">
+          <div class="editor-face">
+            <span class="editor-title" id="editor-title"></span>
+            <div class="editor-grid" id="editor" role="group" aria-label="Selected face, large stickers"></div>
+          </div>
+          <div class="hint" id="hint" aria-live="polite"></div>
+        </div>
         <div class="row">
           <button class="btn" id="btn-example" type="button">New example</button>
           <button class="btn" id="btn-solved" type="button">Solved cube</button>
@@ -217,6 +239,7 @@
         <div class="move" id="card-move"></div>
         <div class="move-title" id="card-title"></div>
         <p class="detail" id="card-detail"></p>
+        <p class="note" id="card-note" hidden></p>
         <div class="alg" id="card-alg"></div>
       </div>
       <div class="controls">
@@ -227,7 +250,8 @@
         <button class="icon-btn big" id="btn-play" type="button" aria-label="Play all turns"></button>
         <button class="icon-btn" id="btn-next" type="button" aria-label="Do this turn">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg></button>
-        <label class="speed" for="speed">Speed <input type="range" id="speed" min="1" max="10" step="1" value="5"></label>
+        <label class="speed" for="speed">Speed <input type="range" id="speed" min="1" max="10" step="1" value="5">
+          <output id="speed-out" for="speed"></output></label>
       </div>
       <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
       <div class="section">
@@ -242,11 +266,14 @@
   </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cubejs@1.3.2/lib/cube.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cubejs@1.3.2/lib/solve.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"
+  integrity="sha384-CI3ELBVUz9XQO+97x6nwMDPosPR5XvsxW2ua7N1Xeygeh1IxtgqtCkGfQY9WWdHu" crossorigin="anonymous"></script>
+<script src="vendor/cubejs/cube.js"></script>
+<script src="vendor/cubejs/solve.js"></script>
 <script src="js/cube.js"></script>
 <script src="js/validate.js"></script>
+<script src="js/describe.js"></script>
+<script src="js/player.js"></script>
 <script src="js/fast.js"></script>
 <script src="js/beginner.js"></script>
 <script src="js/view3d.js"></script>

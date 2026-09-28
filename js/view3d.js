@@ -117,12 +117,11 @@
       moving.forEach(c => pivot.attach(c));
       const axis = new T.Vector3(g.axis[0], g.axis[1], g.axis[2]);
       const t0 = performance.now();
-      const frame = now => {
-        const t = Math.min(1, (now - t0) / ms);
-        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        pivot.setRotationFromAxisAngle(axis, g.angle * e);
-        render();
-        if (t < 1) { requestAnimationFrame(frame); return; }
+      let done = false, fallback = null;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(fallback);
         moving.forEach(c => {
           group.attach(c);
           c.position.set(c.userData.pos[0], c.userData.pos[1], c.userData.pos[2]);
@@ -131,6 +130,18 @@
         group.remove(pivot);
         resolve(); // caller recolors via setState in the same task, so no frame shows the reset
       };
+      const frame = now => {
+        if (done) return;
+        const t = Math.min(1, (now - t0) / ms);
+        const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        pivot.setRotationFromAxisAngle(axis, g.angle * e);
+        render();
+        if (t < 1) requestAnimationFrame(frame);
+        else finish();
+      };
+      // Browsers stop animation frames for hidden or covered windows; finish on time anyway
+      // so playback never stalls.
+      fallback = setTimeout(finish, ms + 250);
       requestAnimationFrame(frame);
     });
   }

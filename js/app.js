@@ -5,34 +5,25 @@
   const V = window.CubeValidate;
   const Fast = window.FastSolver;
   const Beginner = window.BeginnerSolver;
+  const D = window.CubeDescribe;
+  const P = window.CubePlayer;
 
-  const NAMES = { w: 'white', y: 'yellow', g: 'green', b: 'blue', r: 'red', o: 'orange', x: 'unset' };
+  const NAMES = D.NAMES;
+  const FACE_WORD = D.FACE_WORD;
   const PALETTE = ['w', 'y', 'g', 'b', 'r', 'o'];
-  const FACE_WORD = { U: 'Top', D: 'Bottom', F: 'Front', B: 'Back', L: 'Left', R: 'Right' };
   const NET_POS = { U: [1, 2], L: [2, 1], F: [2, 2], R: [2, 3], B: [2, 4], D: [3, 2] };
-  const TURN_HINT = {
-    U: ['the front row slides to the left', 'the front row slides to the right'],
-    D: ['the front row slides to the right', 'the front row slides to the left'],
-    R: ['the front column goes up', 'the front column goes down'],
-    L: ['the front column goes down', 'the front column goes up'],
-    F: ['the top row slides to the right', 'the top row slides to the left'],
-    B: ['the top row slides to the left, seen from the front', 'the top row slides to the right, seen from the front'],
-  };
   const ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>';
   const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
 
   const $ = id => document.getElementById(id);
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  // Only page scrolling honors reduced motion; turn animations always play (they are the instructions).
   const reducedMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-  const app = {
-    state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false,
-    steps: [], states: [], pos: 0, playMethod: 'fast', playing: false, speed: 5, view: null,
-  };
-  let netCells = [], miniCells = [], playTimer = null;
+  const app = { state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false, playMethod: 'fast', view: null };
+  let netCells = [], miniCells = [], editorCells = [], player = null;
 
   const colorName = (s, f) => NAMES[M.centerColor(s, f)];
-  const animMs = () => (reducedMotion ? 0 : 1300 - app.speed * 115);
   const later = fn => new Promise((resolve, reject) => setTimeout(() => {
     try { resolve(fn()); } catch (e) { reject(e); }
   }, 30));
@@ -54,7 +45,7 @@
         label.className = 'face-label';
         label.dataset.face = face;
         label.textContent = FACE_WORD[face];
-        label.setAttribute('aria-label', `How to hold the cube to read the ${FACE_WORD[face].toLowerCase()} face`);
+        label.setAttribute('aria-label', `Edit the ${FACE_WORD[face].toLowerCase()} face and see how to hold the cube for it`);
         box.appendChild(label);
       }
       const grid = document.createElement('div');
@@ -72,38 +63,39 @@
     });
     return cells;
   }
-  function paintNet(cells, state, bad) {
-    cells.forEach((el, i) => {
-      el.style.setProperty('--c', `var(--c-${state[i]})`);
-      el.classList.toggle('bad', !!(bad && bad.has(i)));
-      if (el.tagName === 'BUTTON') {
-        const f = M.FACELETS[i];
-        el.setAttribute('aria-label', `${FACE_WORD[f.face]} face, row ${f.row + 1}, column ${f.col + 1}: ${NAMES[state[i]]}`);
-      }
-    });
+  function paintCell(el, i, state, bad) {
+    el.style.setProperty('--c', `var(--c-${state[i]})`);
+    el.classList.toggle('bad', !!(bad && bad.has(i)));
+    if (el.tagName === 'BUTTON') {
+      const f = M.FACELETS[i];
+      el.setAttribute('aria-label', `${FACE_WORD[f.face]} face, row ${f.row + 1}, column ${f.col + 1}: ${NAMES[state[i]]}`);
+    }
   }
+  const paintNet = (cells, state, bad) => cells.forEach((el, i) => paintCell(el, i, state, bad));
 
-  // ---------- hold + reading hints ----------
+  // ---------- selected face: large editor + reading hint ----------
+  function buildEditor() {
+    const grid = $('editor');
+    for (let k = 0; k < 9; k++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'st';
+      b.dataset.k = String(k);
+      grid.appendChild(b);
+      editorCells.push(b);
+    }
+  }
+  function renderFace() {
+    const fi = M.FACES.indexOf(app.face);
+    editorCells.forEach((el, k) => paintCell(el, fi * 9 + k, app.state, app.bad));
+    $('editor-title').textContent = `${FACE_WORD[app.face]} face · ${colorName(app.state, app.face)} center`;
+    $('hint').innerHTML = `<b>How to hold the cube for the ${FACE_WORD[app.face].toLowerCase()} face.</b> ` + D.faceHint(app.face, app.state);
+    document.querySelectorAll('#net .face').forEach(el => el.classList.toggle('active', el.dataset.face === app.face));
+  }
   function renderHold(state) {
     const up = M.centerColor(state, 'U'), front = M.centerColor(state, 'F');
     $('hold').innerHTML = `Hold: <i class="dot" style="--c:var(--c-${up})"></i>${NAMES[up]} on top ` +
       `<i class="dot" style="--c:var(--c-${front})"></i>${NAMES[front]} facing you`;
-  }
-  function faceHint(face, s) {
-    const c = f => colorName(s, f);
-    return {
-      F: `Hold ${c('U')} on top with ${c('F')} facing you. Paint the stickers exactly as you see them.`,
-      R: `Keep ${c('U')} on top and turn the cube so ${c('R')} faces you. ${cap(c('F'))} is now on your left.`,
-      B: `Keep ${c('U')} on top and turn the cube so ${c('B')} faces you. ${cap(c('R'))} is now on your left.`,
-      L: `Keep ${c('U')} on top and turn the cube so ${c('L')} faces you. ${cap(c('F'))} is now on your right.`,
-      U: `Start with ${c('F')} facing you, then tip the top toward you until ${c('U')} faces you. ${cap(c('F'))} is now along the bottom edge.`,
-      D: `Start with ${c('F')} facing you, then tip the top away from you until ${c('D')} faces you. ${cap(c('F'))} is now along the top edge.`,
-    }[face];
-  }
-  function renderHint() {
-    $('hint').innerHTML = `<b>Reading the ${FACE_WORD[app.face].toLowerCase()} face (${colorName(app.state, app.face)} center).</b> ` +
-      faceHint(app.face, app.state);
-    document.querySelectorAll('#net .face').forEach(el => el.classList.toggle('active', el.dataset.face === app.face));
   }
 
   // ---------- input mode ----------
@@ -127,9 +119,17 @@
   }
   function renderInput() {
     paintNet(netCells, app.state, app.bad);
-    renderHint();
+    renderFace();
     renderHold(app.state);
     if (app.view) app.view.setState(app.state);
+  }
+  function paint(i) {
+    if (app.busy) return;
+    app.face = M.FACELETS[i].face;
+    app.state = app.state.slice();
+    app.state[i] = app.color;
+    app.bad.delete(i);
+    renderInput();
   }
   function setInputState(next, noteHtml) {
     if (app.busy) return;
@@ -171,7 +171,7 @@
     btn.disabled = app.busy || waiting;
     btn.textContent = app.busy ? 'Solving…' : waiting ? 'Preparing solver…' : 'Solve my cube';
     $('solver-status').textContent = st === 'failed'
-      ? "The shortest solver couldn't load (check your internet connection). The beginner method still works."
+      ? "The shortest solver couldn't load. The beginner method still works."
       : waiting ? 'Getting the shortest solver ready. This takes a few seconds the first time.' : '';
   }
   async function solve() {
@@ -190,7 +190,12 @@
       app.state = input;
       startPlayback(steps, method);
     } catch (err) {
-      renderErrors([{ message: `The solver failed on this cube (${err.message}). Please report this cube code: ${M.toFaceletString(input)}`, cells: [] }]);
+      renderErrors([{
+        message: err.code === 'SOLVER_RESTARTING'
+          ? 'The shortest solver stopped and is restarting. Press Solve again in a few seconds, or pick Beginner.'
+          : `The solver failed on this cube (${err.message}). Please report this cube code: ${M.toFaceletString(input)}`,
+        cells: [],
+      }]);
     } finally {
       app.busy = false;
       renderSolveButton();
@@ -198,48 +203,36 @@
   }
 
   // ---------- playback ----------
-  function describeMove(m) {
-    if (m === 'z2') {
-      return { title: 'Flip the whole cube', detail: 'Roll the whole cube half a turn like a steering wheel. The front stays facing you; top and bottom swap, and so do left and right.' };
-    }
-    const face = FACE_WORD[m[0]], lower = face.toLowerCase(), suffix = m.slice(1);
-    if (suffix === '2') return { title: `${face} face, half turn`, detail: `Turn the ${lower} face 180°. Either direction works.` };
-    const cw = suffix === '';
-    const dir = cw ? 'clockwise' : 'counter-clockwise';
-    return { title: `${face} face, ${dir}`, detail: `Quarter turn ${dir}, as if you were looking straight at the ${lower} face: ${TURN_HINT[m[0]][cw ? 0 : 1]}.` };
-  }
   function startPlayback(steps, method) {
     app.playMethod = method;
-    app.steps = steps;
-    app.states = [app.state.slice()];
-    steps.forEach((st, k) => app.states.push(M.applyMove(app.states[k], st.move)));
-    app.pos = 0;
-    stopPlay();
+    const states = [app.state.slice()];
+    steps.forEach((st, k) => states.push(M.applyMove(states[k], st.move)));
     $('input-panel').hidden = true;
     $('play-panel').hidden = false;
     document.body.classList.add('is-playing');
-    buildMoveList();
-    if (app.view) app.view.setState(app.states[0]);
-    renderPlay();
+    if (app.view) app.view.resetView();
+    player.load(states, steps);
+    buildMoveList(steps);
+    renderPlay(player);
     const behavior = reducedMotion ? 'auto' : 'smooth';
     // Phones: bring the step card up under the sticky cube; controls stick to the bottom.
     if (window.matchMedia && window.matchMedia('(max-width: 860px)').matches) $('card').scrollIntoView({ block: 'start', behavior });
     else window.scrollTo({ top: 0, behavior });
   }
   function backToEdit() {
-    if (app.busy) return;
-    stopPlay();
-    $('play-panel').hidden = true;
-    $('input-panel').hidden = false;
-    document.body.classList.remove('is-playing');
-    renderInput();
+    player.afterTurn(() => {
+      $('play-panel').hidden = true;
+      $('input-panel').hidden = false;
+      document.body.classList.remove('is-playing');
+      renderInput();
+    });
   }
-  function buildMoveList() {
+  function buildMoveList(steps) {
     const box = $('moves');
     box.textContent = '';
-    if (!app.steps.length) { box.textContent = 'No turns needed.'; return; }
+    if (!steps.length) { box.textContent = 'No turns needed.'; return; }
     let chips = null, stage = -1;
-    app.steps.forEach((st, k) => {
+    steps.forEach((st, k) => {
       if (st.stage !== stage) {
         stage = st.stage;
         const sec = document.createElement('div');
@@ -278,13 +271,10 @@
       el.appendChild(span);
     });
   }
-  function renderPlayButton() {
-    const b = $('btn-play');
-    b.innerHTML = app.playing ? ICON_PAUSE : ICON_PLAY;
-    b.setAttribute('aria-label', app.playing ? 'Pause' : 'Play all turns');
-  }
-  function renderPlay() {
-    const total = app.steps.length, pos = app.pos, cur = app.states[pos], step = app.steps[pos];
+  function renderPlay(p) {
+    if ($('play-panel').hidden) return;
+    const total = p.steps.length, pos = p.pos, cur = p.states[pos], step = p.steps[pos];
+    if (app.view && !p.busy) app.view.setState(cur);
     $('counter').textContent = total ? (step ? `Turn ${pos + 1} of ${total}` : `Done · ${total} turns`) : '';
     $('progress-bar').style.width = total ? `${(pos / total) * 100}%` : '100%';
     renderHold(cur);
@@ -298,8 +288,9 @@
         ? 'Your cube should now be solved. Use back or the turn list to review any turn.'
         : 'This cube is already solved. Go back and enter a scrambled cube.';
       $('card-alg').textContent = '';
+      $('card-note').hidden = true;
     } else {
-      const d = describeMove(step.move);
+      const d = D.describeMove(step.move);
       $('card-stage').textContent = app.playMethod === 'beginner'
         ? (step.stage === 0 ? 'Before you start' : `Stage ${step.stage} of 7 · ${step.stageName}`)
         : 'Next turn';
@@ -307,6 +298,8 @@
       $('card-title').textContent = d.title;
       $('card-detail').textContent = d.detail;
       renderAlg(step);
+      $('card-note').textContent = step.note || '';
+      $('card-note').hidden = !step.note;
     }
     const box = $('moves');
     box.querySelectorAll('.chip').forEach((el, k) => {
@@ -317,58 +310,15 @@
     if (now && (now.offsetTop < box.scrollTop || now.offsetTop > box.scrollTop + box.clientHeight - 40)) {
       box.scrollTop = now.offsetTop - 40;
     }
-    $('btn-restart').disabled = pos === 0;
-    $('btn-prev').disabled = pos === 0;
+    $('btn-restart').disabled = pos === 0 && !p.busy;
+    $('btn-prev').disabled = pos === 0 && !p.busy;
     $('btn-next').disabled = pos >= total;
     $('btn-play').disabled = total === 0;
-    renderPlayButton();
+    $('btn-play').innerHTML = p.playing ? ICON_PAUSE : ICON_PLAY;
+    $('btn-play').setAttribute('aria-label', p.playing ? 'Pause' : 'Play all turns');
   }
-  async function stepForward() {
-    if (app.busy || app.pos >= app.steps.length) return false;
-    app.busy = true;
-    if (app.view) await app.view.animateMove(app.steps[app.pos].move, animMs());
-    app.pos++;
-    if (app.view) app.view.setState(app.states[app.pos]);
-    app.busy = false;
-    renderPlay();
-    return true;
-  }
-  async function stepBack() {
-    if (app.busy || app.pos === 0) return;
-    stopPlay();
-    app.busy = true;
-    if (app.view) await app.view.animateMove(M.invertMove(app.steps[app.pos - 1].move), animMs());
-    app.pos--;
-    if (app.view) app.view.setState(app.states[app.pos]);
-    app.busy = false;
-    renderPlay();
-  }
-  function jump(k) {
-    if (app.busy) return;
-    stopPlay();
-    app.pos = Math.max(0, Math.min(k, app.steps.length));
-    if (app.view) app.view.setState(app.states[app.pos]);
-    renderPlay();
-  }
-  function stopPlay() {
-    app.playing = false;
-    clearTimeout(playTimer);
-    renderPlayButton();
-  }
-  function togglePlay() {
-    if (app.playing) { stopPlay(); return; }
-    if (app.busy || !app.steps.length) return;
-    if (app.pos >= app.steps.length) jump(0);
-    app.playing = true;
-    renderPlayButton();
-    tick();
-  }
-  async function tick() {
-    if (!app.playing) return;
-    const moved = await stepForward();
-    if (!app.playing) return;
-    if (!moved || app.pos >= app.steps.length) { stopPlay(); return; }
-    playTimer = setTimeout(tick, reducedMotion ? 700 : 250 + animMs() * 0.6);
+  function renderSpeed() {
+    $('speed-out').textContent = `${(P.turnMs(player.speed) / 1000).toFixed(2)} s per turn`;
   }
 
   // ---------- boot ----------
@@ -376,6 +326,7 @@
     if (!window.THREE || !window.CubeView) {
       showBanner("Couldn't load the 3D library (three.js). Check your internet connection and reload. The flat cube map still shows every turn.");
       $('view').innerHTML = '<p class="no3d">3D view unavailable</p>';
+      $('btn-reset-view').hidden = true;
       return;
     }
     try {
@@ -384,26 +335,25 @@
       app.view = null;
       showBanner('The 3D view could not start on this device (WebGL is unavailable). The flat cube map still shows every turn.');
       $('view').innerHTML = '<p class="no3d">3D view unavailable</p>';
+      $('btn-reset-view').hidden = true;
     }
   }
   function wire() {
     $('net').addEventListener('click', e => {
       const label = e.target.closest('.face-label');
-      if (label) { app.face = label.dataset.face; renderHint(); return; }
+      if (label) { app.face = label.dataset.face; renderFace(); return; }
       const el = e.target.closest('button.st');
-      if (!el || app.busy) return;
-      const i = Number(el.dataset.i);
-      app.face = M.FACELETS[i].face;
-      app.state = app.state.slice();
-      app.state[i] = app.color;
-      app.bad.delete(i);
-      renderInput();
+      if (el) paint(Number(el.dataset.i));
     });
     $('net').addEventListener('focusin', e => {
       const el = e.target.closest('button.st');
       if (!el) return;
       app.face = M.FACELETS[Number(el.dataset.i)].face;
-      renderHint();
+      renderFace();
+    });
+    $('editor').addEventListener('click', e => {
+      const el = e.target.closest('button.st');
+      if (el) paint(M.FACES.indexOf(app.face) * 9 + Number(el.dataset.k));
     });
     $('btn-example').addEventListener('click', loadExample);
     $('btn-solved').addEventListener('click', () => setInputState(M.SOLVED.slice(), ''));
@@ -415,23 +365,24 @@
     }));
     $('btn-solve').addEventListener('click', solve);
     $('btn-edit').addEventListener('click', backToEdit);
-    $('btn-restart').addEventListener('click', () => jump(0));
-    $('btn-prev').addEventListener('click', stepBack);
-    $('btn-next').addEventListener('click', () => { stopPlay(); stepForward(); });
-    $('btn-play').addEventListener('click', togglePlay);
-    $('speed').addEventListener('input', e => { app.speed = Number(e.target.value); });
+    $('btn-reset-view').addEventListener('click', () => { if (app.view) app.view.resetView(); });
+    $('btn-restart').addEventListener('click', () => player.jump(0));
+    $('btn-prev').addEventListener('click', () => player.back());
+    $('btn-next').addEventListener('click', () => { player.stop(); player.next(); });
+    $('btn-play').addEventListener('click', () => player.togglePlay());
+    $('speed').addEventListener('input', e => { player.setSpeed(Number(e.target.value)); renderSpeed(); });
     $('moves').addEventListener('click', e => {
       const b = e.target.closest('.chip');
-      if (b) jump(Number(b.dataset.k));
+      if (b) player.jump(Number(b.dataset.k));
     });
     document.addEventListener('keydown', e => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (e.target.closest && e.target.closest('input, textarea, select')) return;
       if (!$('play-panel').hidden) {
-        if (e.key === 'ArrowRight') { e.preventDefault(); stopPlay(); stepForward(); }
-        else if (e.key === 'ArrowLeft') { e.preventDefault(); stepBack(); }
-        else if (e.key === 'Home') { e.preventDefault(); jump(0); }
-        else if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); togglePlay(); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); player.stop(); player.next(); }
+        else if (e.key === 'ArrowLeft') { e.preventDefault(); player.back(); }
+        else if (e.key === 'Home') { e.preventDefault(); player.jump(0); }
+        else if (e.key === ' ' && !e.target.closest('button')) { e.preventDefault(); player.togglePlay(); }
       } else if (PALETTE.includes(e.key.toLowerCase())) {
         selectColor(e.key.toLowerCase());
       }
@@ -442,7 +393,14 @@
     selectColor('w');
     netCells = buildNet($('net'), true);
     miniCells = buildNet($('mini-net'), false);
+    buildEditor();
     initView();
+    player = P.createPlayer({
+      animate: (move, ms) => (app.view ? app.view.animateMove(move, ms) : Promise.resolve()),
+      onChange: renderPlay,
+    });
+    player.setSpeed(Number($('speed').value));
+    renderSpeed();
     wire();
     loadExample();
     Fast.onStatus(renderSolveButton);
