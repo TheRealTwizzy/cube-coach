@@ -107,3 +107,10 @@ test('playback tracks the real cube, except a preview from a solved cube that ha
   assert.equal(label({ pos: 0, kind: 'solve', startIsPhysical: true, name: '' }), 'Your checked cube');
   assert.equal(label({ pos: 20, kind: 'solve', startIsPhysical: true, name: '' }), 'End of your solve');
 });
+
+test('custom sequences read naturally in labels', () => {
+  const at = pos => S.trackPlayback({ pos, total: 4, kind: 'pattern', name: 'Your sequence', custom: true, startIsPhysical: true });
+  assert.equal(at(4), 'End of your sequence');
+  assert.equal(at(2), 'After turn 2 of 4 · your sequence');
+  assert.equal(S.trackPlayback({ pos: 4, total: 4, kind: 'pattern', name: 'Wire', startIsPhysical: true }), 'End of Wire');
+});

@@ -96,5 +96,5 @@
     return `Hold ${NAMES[M.centerColor(picture, 'U')]} on top and ${NAMES[M.centerColor(picture, 'F')]} facing you to see it like the picture.`;
   }
 
-  return { NAMES, FACE_WORD, TURNS, READING, region, faceHint, describeMove, centerChange, pictureHint };
+  return { NAMES, FACE_WORD, TURNS, READING, region, lookAt, faceHint, describeMove, centerChange, pictureHint };
 });

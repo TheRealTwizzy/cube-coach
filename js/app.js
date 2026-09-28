@@ -47,12 +47,17 @@
   function showBanner(text) { const b = $('banner'); b.textContent = text; b.hidden = false; }
 
   // ---------- panels and modes ----------
-  function showPanel(name) {
+  // focus: move keyboard focus to the new panel (user-initiated switches only).
+  function showPanel(name, focus) {
     $('input-panel').hidden = name !== 'input';
     $('pattern-panel').hidden = name !== 'patterns';
     $('play-panel').hidden = name !== 'play';
     document.body.classList.toggle('is-playing', name === 'play');
     document.body.classList.toggle('is-patterns', name === 'patterns');
+    if (focus) {
+      const target = name === 'play' ? $('card') : document.querySelector(`#${name === 'input' ? 'input' : 'pattern'}-panel h2`);
+      if (target) target.focus({ preventScroll: true });
+    }
   }
   function renderModeSwitch() {
     $('mode-solve').setAttribute('aria-pressed', String(app.mode === 'solve'));
@@ -68,7 +73,7 @@
     });
   }
   function enterSolve() {
-    showPanel('input');
+    showPanel('input', true);
     if (physical.shouldLoadIntoNet(app.state)) {
       const now = physical.get();
       setInputState(now.state, `Loaded from: ${now.label}. If your real cube looks different, paint over it.`);
@@ -78,7 +83,7 @@
   }
   function enterPatterns() {
     buildGallery();
-    showPanel('patterns');
+    showPanel('patterns', true);
     const now = physical.get();
     app.startFrom = now && !M.isSolved(now.state) ? 'now' : 'solved';
     showPatternInView();
@@ -177,6 +182,9 @@
     renderFace();
     renderHold(app.state);
     if (app.view) app.view.setState(app.state);
+    const now = physical.get(), offer = !!now && now.state.join('') !== app.state.join('');
+    $('use-now').hidden = !offer;
+    if (offer) $('use-now').textContent = `Use my cube now (${now.label})`;
   }
   function paint(i) {
     if (app.busy) return;
@@ -321,7 +329,7 @@
     showPatternInView();
     renderPatternDetail();
     requestRoute();
-    if (scroll && narrow()) $('pattern-detail').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+    if (scroll) $('pattern-detail').scrollIntoView({ block: narrow() ? 'start' : 'nearest', behavior: scrollBehavior() });
   }
   function onCustomInput() {
     customTimer = null;
@@ -407,13 +415,13 @@
       start = r.from; moves = r.moves; kind = 'route'; relabeled = r.plan.relabeled;
     }
     const { states, steps } = Pat.patternSteps({ name: sel.name, start, moves, kind });
-    startPlayback({ states, steps, kind: 'pattern', method: 'fast', name: sel.name, picture: sel.state, relabeled, startIsPhysical: kind === 'route' });
+    startPlayback({ states, steps, kind: 'pattern', method: 'fast', name: sel.name, picture: sel.state, relabeled, startIsPhysical: kind === 'route', custom: !!sel.custom });
   }
 
   // ---------- playback ----------
   function startPlayback(play) {
     app.play = play;
-    showPanel('play');
+    showPanel('play', true);
     $('btn-edit').textContent = play.kind === 'pattern' ? '← Patterns' : '← Edit cube';
     if (app.view) app.view.resetView();
     player.load(play.states, play.steps);
@@ -426,7 +434,7 @@
   function backFromPlay() {
     player.afterTurn(() => {
       if (app.play.kind === 'pattern') { enterPatterns(); return; }
-      showPanel('input');
+      showPanel('input', true);
       renderInput();
     });
   }
@@ -480,7 +488,7 @@
     const pattern = app.play.kind === 'pattern';
     if (!p.busy) {
       if (app.view) app.view.setState(cur);
-      const label = S.trackPlayback({ pos, total, kind: app.play.kind, name: app.play.name, startIsPhysical: app.play.startIsPhysical });
+      const label = S.trackPlayback({ pos, total, kind: app.play.kind, name: app.play.name, custom: app.play.custom, startIsPhysical: app.play.startIsPhysical });
       if (label) physical.set(cur, label);
     }
     $('counter').textContent = total ? (step ? `Turn ${pos + 1} of ${total}` : `Done · ${total} turns`) : '';
@@ -567,6 +575,10 @@
       if (el) paint(M.FACES.indexOf(app.face) * 9 + Number(el.dataset.k));
     });
     $('btn-example').addEventListener('click', loadExample);
+    $('use-now').addEventListener('click', () => {
+      const now = physical.get();
+      if (now) setInputState(now.state, `Loaded from: ${now.label}.`);
+    });
     $('btn-solved').addEventListener('click', () => setInputState(M.SOLVED, ''));
     $('btn-clear').addEventListener('click', () => setInputState(
       app.state.map((c, i) => (i % 9 === 4 ? c : 'x')), 'Cleared. Centers are kept; paint every other sticker.'));

@@ -24,9 +24,9 @@
 
   // Label for "my cube now" at a playback position, or null when playback must not claim the
   // real cube (a preview that starts from a solved cube the user may not be holding).
-  function trackPlayback({ pos, total, kind, name, startIsPhysical }) {
+  function trackPlayback({ pos, total, kind, name, custom, startIsPhysical }) {
     if (pos === 0 && !startIsPhysical) return null;
-    const what = kind === 'pattern' ? name : 'your solve';
+    const what = kind !== 'pattern' ? 'your solve' : custom ? name.charAt(0).toLowerCase() + name.slice(1) : name;
     if (pos === 0) return kind === 'pattern' ? `Start of ${what}` : 'Your checked cube';
     if (pos >= total) return `End of ${what}`;
     return `After turn ${pos} of ${total} · ${what}`;

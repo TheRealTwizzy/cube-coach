@@ -78,3 +78,11 @@ test('pictureHint says how to hold the cube to match the picture', () => {
   assert.equal(D.pictureHint(M.SOLVED, M.SOLVED), '');
   assert.match(D.pictureHint(M.applyMove(M.SOLVED, 'z2'), M.SOLVED), /Hold white on top and green facing you/);
 });
+
+test('"as seen from the … face" matches each move\'s real turning axis', () => {
+  const faceOfWord = Object.fromEntries(Object.entries(D.FACE_WORD).map(([f, w]) => [w.toLowerCase(), f]));
+  for (const base of Object.keys(D.TURNS)) {
+    const face = faceOfWord[D.lookAt(base)];
+    assert.deepEqual(M.NORMALS[face], M.moveGeometry(base).axis, base);
+  }
+});
