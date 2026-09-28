@@ -54,3 +54,27 @@ test('faceHint names the colors and where the neighbor is', () => {
   assert.match(D.faceHint('U', M.SOLVED), /Green is along the bottom edge\./);
   assert.match(D.faceHint('D', M.SOLVED), /Green is along the top edge\./);
 });
+
+test('every one of the 54 moves has wording', () => {
+  for (const m of M.MOVES) {
+    const d = D.describeMove(m);
+    assert.ok(d.title && d.detail.length > 20, m);
+    assert.doesNotMatch(d.title + d.detail, /undefined/, m);
+  }
+  assert.match(D.describeMove('M').detail, /centers move too/);
+  assert.match(D.describeMove("x'").title, /whole cube/i);
+});
+
+test('the turn claims cover slices, wide moves and rotations', () => {
+  for (const m of 'MESurfdlbxyz') assert.ok(D.TURNS[m], m);
+});
+
+test('centerChange tells the new hold when centers move', () => {
+  assert.equal(D.centerChange(M.SOLVED, M.applyMove(M.SOLVED, 'R')), '');
+  assert.match(D.centerChange(M.SOLVED, M.applyMove(M.SOLVED, 'M2')), /yellow is on top and blue faces you/);
+});
+
+test('pictureHint says how to hold the cube to match the picture', () => {
+  assert.equal(D.pictureHint(M.SOLVED, M.SOLVED), '');
+  assert.match(D.pictureHint(M.applyMove(M.SOLVED, 'z2'), M.SOLVED), /Hold white on top and green facing you/);
+});
