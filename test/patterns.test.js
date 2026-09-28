@@ -110,7 +110,9 @@ test('patternSteps: labels, start note, center notes and states', () => {
   const { states, steps } = P.patternSteps({ name: e.name, start: M.SOLVED, moves: e.moves, kind: 'solved' });
   assert.equal(steps.length, e.moves.length);
   assert.deepEqual(states[states.length - 1], e.state);
-  assert.match(steps[0].note, /Start from a solved cube, white on top, green facing you/);
+  assert.match(steps[0].note, /Start from your solved cube, white on top and green facing you/);
+  const flipped = P.patternSteps({ name: e.name, start: M.applyMove(M.SOLVED, 'z2'), moves: e.moves, kind: 'solved' });
+  assert.match(flipped.steps[0].note, /yellow on top and green facing you/);
   const slice = steps.find(st => st.move === 'M2');
   assert.match(slice.note, /After this move, .* is on top/);
   steps.forEach((st, k) => {

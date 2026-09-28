@@ -123,7 +123,7 @@
     ["Scrambled 2x2s", "U2 B' R U' L F B2 U F' U F2 L2 U D B2 L2 B2 L2"],
   ].map(([name, alg, aliases]) => ({ name, alg, aliases: aliases || [] }));
 
-  const START_NOTE = 'Start from a solved cube, white on top, green facing you.';
+  const startNote = s => `Start from your solved cube, ${D.NAMES[M.centerColor(s, 'U')]} on top and ${D.NAMES[M.centerColor(s, 'F')]} facing you.`;
   const SOLVED_KEY = M.centerKey(M.SOLVED);
 
   // Same pattern however the cube is held: turn it to the standard hold first.
@@ -212,7 +212,7 @@
     moves.forEach((m, k) => states.push(M.applyMove(states[k], m)));
     const algName = kind === 'route' ? `Route to ${name}` : name;
     const steps = moves.map((move, k) => {
-      const note = [k === 0 && kind === 'solved' ? START_NOTE : '', D.centerChange(states[k], states[k + 1])].filter(Boolean).join(' ');
+      const note = [k === 0 && kind === 'solved' ? startNote(start) : '', D.centerChange(states[k], states[k + 1])].filter(Boolean).join(' ');
       return { move, stage: 1, stageName: name, algName, alg: moves.join(' '), algPos: k, algLen: moves.length, note };
     });
     return { states, steps };
