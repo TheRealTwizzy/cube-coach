@@ -75,7 +75,9 @@
   .net { --s: clamp(22px, 6vw, 34px); display: grid; grid-template-columns: repeat(4, max-content); gap: 6px; }
   .net.mini { --s: 13px; gap: 3px; }
   .face { display: grid; gap: 4px; align-content: end; }
-  .face-label { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .face-label { justify-self: start; padding: 0; border: 0; background: none; font: 600 11px/1 var(--font-mono);
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted); cursor: pointer; }
+  .face-label:hover, .face.active .face-label { color: var(--accent); }
   .grid { display: grid; grid-template-columns: repeat(3, var(--s)); gap: 3px; padding: 3px; border-radius: 7px; background: var(--plastic); }
   .net.mini .grid { gap: 2px; padding: 2px; border-radius: 4px; }
   .face.active .grid { box-shadow: 0 0 0 3px var(--accent); }

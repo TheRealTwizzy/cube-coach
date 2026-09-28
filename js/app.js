@@ -49,9 +49,12 @@
       box.style.gridRow = String(NET_POS[face][0]);
       box.style.gridColumn = String(NET_POS[face][1]);
       if (interactive) {
-        const label = document.createElement('span');
+        const label = document.createElement('button');
+        label.type = 'button';
         label.className = 'face-label';
+        label.dataset.face = face;
         label.textContent = FACE_WORD[face];
+        label.setAttribute('aria-label', `How to hold the cube to read the ${FACE_WORD[face].toLowerCase()} face`);
         box.appendChild(label);
       }
       const grid = document.createElement('div');
@@ -153,7 +156,7 @@
     if (errors.some(e => e.cells && e.cells.length)) {
       const li = document.createElement('li');
       li.className = 'tip';
-      li.textContent = 'Stickers to recheck are outlined in red. Most mistakes come from holding the cube differently while reading a face. Tap any sticker on a face to see how to hold the cube for it.';
+      li.textContent = 'Stickers to recheck are outlined in red. Most mistakes come from holding the cube differently while reading a face. Tap a face name (Top, Front, Right…) to see how to hold the cube for it.';
       ul.appendChild(li);
     }
   }
@@ -380,6 +383,8 @@
   }
   function wire() {
     $('net').addEventListener('click', e => {
+      const label = e.target.closest('.face-label');
+      if (label) { app.face = label.dataset.face; renderHint(); return; }
       const el = e.target.closest('button.st');
       if (!el || app.busy) return;
       const i = Number(el.dataset.i);
