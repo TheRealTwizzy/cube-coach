@@ -261,6 +261,7 @@
     app.bad = new Set(result.errors.flatMap(e => e.cells));
     renderErrors(result.errors);
     if (result.ok) {
+      app.check = new Set();
       app.confirmed = true;
       app.cubeLabel = '';
     }
@@ -275,6 +276,7 @@
     shot = null;
     $('btn-scan').hidden = true;
     $('paint-area').hidden = true;
+    $('confirm-section').hidden = true;
     $('scan-area').hidden = false;
     $('scan-msg').textContent = '';
     renderScan();
@@ -286,6 +288,7 @@
     $('scan-file').value = '';
     $('scan-area').hidden = true;
     $('paint-area').hidden = false;
+    $('confirm-section').hidden = false;
     $('btn-scan').hidden = false;
   }
   function renderScan() {
@@ -304,15 +307,17 @@
     });
   }
   function loadImage(file) {
-    if (window.createImageBitmap) return createImageBitmap(file).catch(() => loadImageElement(file));
+    // Portrait phone photos carry their rotation in EXIF; ask for it to be applied.
+    if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => loadImageElement(file));
     return loadImageElement(file);
   }
   function loadImageElement(file) {
     return new Promise((resolve, reject) => {
       const im = new Image();
-      im.onload = () => resolve(im);
-      im.onerror = () => reject(new Error('That file is not a photo this browser can read.'));
-      im.src = URL.createObjectURL(file);
+      const url = URL.createObjectURL(file);
+      im.onload = () => { URL.revokeObjectURL(url); resolve(im); };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not a photo this browser can read.')); };
+      im.src = url;
     });
   }
   async function onPhoto(file) {
@@ -329,9 +334,11 @@
     canvas.height = Math.round(source.height * s);
     const ctx = canvas.getContext('2d');
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    if (source.close) source.close(); // a full-size photo bitmap is tens of MB
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const found = Vis.findFace(img), q = Vis.quality(img);
     shot = { img, corners: found.corners };
+    $('scan-anyway').hidden = true;
     const msgs = [];
     if (found.method === 'none') msgs.push("Couldn't find the face. Drag the 4 corners onto the face's corners.");
     else if (found.method === 'body') msgs.push('Check that the grid lines up with the stickers, and drag the corners if not.');
@@ -375,8 +382,8 @@
       const h = document.createElement('div');
       h.className = 'scan-handle';
       h.tabIndex = 0;
-      h.setAttribute('role', 'slider');
-      h.setAttribute('aria-label', `Face corner, ${name}. Arrow keys move it.`);
+      h.setAttribute('role', 'button');
+      h.setAttribute('aria-label', `Face corner, ${name}. Drag it, or move it with the arrow keys.`);
       const moveTo = (x, y) => {
         const canvas = $('scan-canvas');
         shot.corners[k] = [Math.max(0, Math.min(canvas.width, x)), Math.max(0, Math.min(canvas.height, y))];
@@ -403,19 +410,29 @@
   }
   function retakePhoto() {
     shot = null;
+    $('scan-anyway').hidden = true;
     $('scan-file').value = '';
     $('scan-msg').textContent = '';
     renderScan();
     $('scan-take').focus({ preventScroll: true });
   }
-  function acceptPhoto() {
+  function acceptPhoto(anyway) {
     const step = scan.step();
     if (!step || !shot) return;
+    const problem = anyway ? null : scan.checkCenter(step.face, shot.samples);
+    if (problem) {
+      $('scan-msg').textContent = `${problem} Retake it, or use it anyway if the colors below are right.`;
+      $('scan-anyway').hidden = false;
+      return;
+    }
     scan.setFace(step.face, shot.samples);
-    const dup = scan.duplicateCenters().find(d => d.second === step.face);
-    if (dup) scan.redo(step.face);
     retakePhoto();
-    if (dup) $('scan-msg').textContent = dup.message;
+  }
+  function retakeFace(face) {
+    if (!scan || !scan.faces[face]) return;
+    scan.redo(face);
+    retakePhoto();
+    $('scan-msg').textContent = `Retaking the ${FACE_WORD[face].toLowerCase()} face.`;
   }
   function finishScan() {
     const { state, uncertain } = scan.result();
@@ -677,7 +694,7 @@
       if (app.view) app.view.setState(cur);
       // My Cube follows the real cube through the playback.
       const label = S.trackPlayback({ pos, total, kind: app.play.kind, name: app.play.name, custom: app.play.custom, startIsPhysical: true });
-      if (label) { app.cube = cur.slice(); app.cubeLabel = label; }
+      if (label) { app.cube = cur.slice(); app.cubeLabel = label; app.check = new Set(); }
     }
     $('counter').textContent = total ? (step ? `Turn ${pos + 1} of ${total}` : `Done · ${total} turns`) : '';
     $('progress-bar').style.width = total ? `${(pos / total) * 100}%` : '100%';
@@ -772,7 +789,13 @@
     $('scan-take').addEventListener('click', () => $('scan-file').click());
     $('scan-file').addEventListener('change', e => onPhoto(e.target.files && e.target.files[0]));
     $('scan-retake').addEventListener('click', retakePhoto);
-    $('scan-ok').addEventListener('click', acceptPhoto);
+    $('scan-ok').addEventListener('click', () => acceptPhoto(false));
+    $('scan-anyway').addEventListener('click', () => acceptPhoto(true));
+    $('scan-net').addEventListener('click', e => { const f = e.target.closest('.face'); if (f) retakeFace(f.dataset.face); });
+    $('scan-net').addEventListener('keydown', e => {
+      const f = e.target.closest('.face');
+      if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); retakeFace(f.dataset.face); }
+    });
     $('scan-cancel').addEventListener('click', () => { endScan(); $('btn-scan').focus({ preventScroll: true }); });
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
       app.method = r.value;
@@ -823,6 +846,11 @@
     miniCells = buildNet($('mini-net'), false);
     solveCells = buildNet($('solve-net'), false);
     scanCells = buildNet($('scan-net'), false);
+    $('scan-net').querySelectorAll('.face').forEach(f => {
+      f.tabIndex = 0;
+      f.setAttribute('role', 'button');
+      f.setAttribute('aria-label', `Retake the ${FACE_WORD[f.dataset.face].toLowerCase()} face photo`);
+    });
     buildEditor();
     initView();
     player = P.createPlayer({

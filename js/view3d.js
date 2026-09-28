@@ -69,7 +69,7 @@
     function resize() {
       const w = container.clientWidth, h = container.clientHeight;
       if (!w || !h) return;
-      renderer.setSize(w, h);
+      renderer.setSize(w, h, false); // CSS sizes the canvas (100%); a fixed px width would stop the layout shrinking
       camera.aspect = w / h;
       const vfov = T.MathUtils.degToRad(camera.fov);
       const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);

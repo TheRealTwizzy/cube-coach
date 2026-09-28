@@ -44,7 +44,7 @@
   .banner { margin: 0; padding: 10px 14px; border: 1px solid var(--danger); border-radius: 10px; background: var(--surface); }
 
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
-  .viewer { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); display: grid; gap: 8px; }
+  .viewer { min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); display: grid; gap: 8px; }
   #view { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 78vh; overflow: hidden; border-radius: 16px;
     border: 1px solid var(--line); background: radial-gradient(circle at 50% 40%, var(--surface) 0%, var(--surface-2) 75%); }
   #view canvas { display: block; width: 100%; height: 100%; cursor: grab; }
@@ -105,7 +105,9 @@
   #btn-scan { justify-self: start; }
   .scan { display: grid; gap: 12px; }
   #scan-take { justify-self: start; }
-  .scan-photo { position: relative; justify-self: start; width: 100%; max-width: 480px; touch-action: none; }
+  /* Only the corner handles block scrolling; clip them at the sides so they never widen the page. */
+  .scan-photo { position: relative; justify-self: start; width: 100%; max-width: 480px; overflow-x: clip; }
+  #scan-net .face { cursor: pointer; }
   .scan-photo canvas { display: block; width: 100%; height: auto; border-radius: 10px; }
   .scan-handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid #fff; border-radius: 50%;
     background: rgba(29, 78, 216, .35); box-shadow: 0 0 0 2px rgba(0,0,0,.5); cursor: grab; touch-action: none; }
@@ -266,7 +268,9 @@
           <div class="row" id="scan-actions" hidden>
             <button class="btn" id="scan-retake" type="button">Retake</button>
             <button class="btn primary" id="scan-ok" type="button">Looks right</button>
+            <button class="btn" id="scan-anyway" type="button" hidden>Use it anyway</button>
           </div>
+          <p class="tip">Tap a finished face below to retake its photo.</p>
           <div class="net mini" id="scan-net"></div>
         </div>
         <div class="paint" id="paint-area">
@@ -287,7 +291,7 @@
         </div>
         <p class="tip" id="scramble-note"></p>
       </div>
-      <div class="section">
+      <div class="section" id="confirm-section">
         <h2><span class="n">2</span>Confirm</h2>
         <button class="btn primary" id="btn-confirm" type="button">This is my cube</button>
         <p class="status" id="cube-status" aria-live="polite"></p>
