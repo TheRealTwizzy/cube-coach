@@ -141,6 +141,12 @@
     .layout { grid-template-columns: 1fr; }
     .viewer { position: static; }
     #view { aspect-ratio: 4 / 3; max-height: 46vh; }
+    /* Playback on phones: keep the cube on top and the turn controls at the bottom of the screen. */
+    .is-playing .viewer { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
+    .is-playing #view { max-height: 34vh; }
+    .is-playing .view-note { display: none; }
+    .is-playing .card { scroll-margin-top: calc(34vh + 24px); }
+    .is-playing .controls { position: sticky; bottom: env(safe-area-inset-bottom, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
   }
   @media (max-width: 440px) {
     .methods { grid-template-columns: 1fr; }

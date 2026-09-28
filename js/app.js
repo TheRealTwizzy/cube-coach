@@ -217,16 +217,21 @@
     stopPlay();
     $('input-panel').hidden = true;
     $('play-panel').hidden = false;
+    document.body.classList.add('is-playing');
     buildMoveList();
     if (app.view) app.view.setState(app.states[0]);
     renderPlay();
-    window.scrollTo({ top: 0, behavior: reducedMotion ? 'auto' : 'smooth' });
+    const behavior = reducedMotion ? 'auto' : 'smooth';
+    // Phones: bring the step card up under the sticky cube; controls stick to the bottom.
+    if (window.matchMedia && window.matchMedia('(max-width: 860px)').matches) $('card').scrollIntoView({ block: 'start', behavior });
+    else window.scrollTo({ top: 0, behavior });
   }
   function backToEdit() {
     if (app.busy) return;
     stopPlay();
     $('play-panel').hidden = true;
     $('input-panel').hidden = false;
+    document.body.classList.remove('is-playing');
     renderInput();
   }
   function buildMoveList() {
