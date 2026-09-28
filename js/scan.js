@@ -39,5 +39,25 @@
     };
   }
 
-  return { ORDER, createScan };
+  // Live camera: capture once the grid has been found in about the same place for `needed` frames
+  // in a row with the center matching the face asked for. Any fallback detection, wrong center or
+  // movement of more than `tolerance` (fraction of the face size) starts the count again.
+  function createSteadiness({ needed = 6, tolerance = 0.06 } = {}) {
+    let last = null, count = 0;
+    return {
+      push(found, centerOk) {
+        if (!found || found.method !== 'grid' || !centerOk) { last = null; count = 0; return false; }
+        const [a, b] = found.corners;
+        const size = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const moved = last ? Math.max(...found.corners.map((p, k) => Math.hypot(p[0] - last[k][0], p[1] - last[k][1]))) / size : Infinity;
+        count = moved <= tolerance ? count + 1 : 1;
+        last = found.corners.map(p => p.slice());
+        return count >= needed;
+      },
+      reset() { last = null; count = 0; },
+      progress: () => Math.min(1, count / needed),
+    };
+  }
+
+  return { ORDER, createScan, createSteadiness };
 });

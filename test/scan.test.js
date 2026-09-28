@@ -87,3 +87,32 @@ test('turning the cube as each instruction says and photographing the front rebu
     assert.deepEqual(s.result().state, state, `scramble ${n}`);
   }
 });
+
+// A detection as findFace returns it: a square of side `size` at (x, y).
+const det = (x, y, size = 100, method = 'grid') => ({ method, corners: [[x, y], [x + size, y], [x + size, y + size], [x, y + size]] });
+
+test('live capture waits for a steady grid with the right center', () => {
+  const st = Scan.createSteadiness({ needed: 4, tolerance: 0.05 });
+  assert.equal(st.push(det(10, 10), true), false);
+  assert.equal(st.push(det(12, 11), true), false);
+  assert.equal(st.push(det(11, 12), true), false);
+  assert.equal(st.progress(), 0.75);
+  assert.equal(st.push(det(12, 12), true), true, 'fourth steady frame captures');
+});
+
+test('moving, a fallback detection or the wrong face starts the count again', () => {
+  const st = Scan.createSteadiness({ needed: 3, tolerance: 0.05 });
+  st.push(det(10, 10), true);
+  st.push(det(10, 10), true);
+  assert.equal(st.push(det(30, 10), true), false, 'moved 20% of the face');
+  assert.equal(st.progress(), 1 / 3);
+  st.push(det(30, 10), true);
+  assert.equal(st.push(det(30, 10, 100, 'body'), true), false);
+  assert.equal(st.progress(), 0);
+  st.push(det(30, 10), true);
+  assert.equal(st.push(det(30, 10), false), false, 'center does not match the face asked for');
+  assert.equal(st.progress(), 0);
+  st.push(det(30, 10), true);
+  st.reset();
+  assert.equal(st.progress(), 0);
+});
