@@ -334,5 +334,12 @@
   // Sharp synthetic faces score 850+, heavily blurred ones under 40; used only as a gentle hint.
   const BLUR_LIMIT = 60;
 
-  return { rgbToLab, homographyMatrix, applyH, homography, downscale, findFace, sampleFace, classify, quality };
+  // The standard color a sample looks most like (for messages such as "a red center").
+  function colorLetter(lab) {
+    let best = 0;
+    CANON_LAB.forEach((c, i) => { if (distance(lab, c) < distance(lab, CANON_LAB[best])) best = i; });
+    return LETTERS[best];
+  }
+
+  return { rgbToLab, homographyMatrix, applyH, homography, downscale, findFace, sampleFace, classify, quality, colorLetter, distance };
 });
