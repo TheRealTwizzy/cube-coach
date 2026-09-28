@@ -83,21 +83,6 @@ test('solver errors keep their code for the message', async () => {
   assert.equal(h.r.get().code, 'SOLVER_RESTARTING');
 });
 
-test('Solve loads "my cube now" only if it changed after the net was last edited', () => {
-  const p = S.createPhysical();
-  const cube1 = FROM, net = M.applyMoves(M.SOLVED, 'R U'), later = M.SOLVED;
-  assert.equal(p.shouldLoadIntoNet(cube1), false, 'nothing known yet');
-  p.set(cube1, 'Your checked cube');
-  p.netChanged(); // the checked net is the reference
-  p.set(later, 'End of your solve'); // playback moved on
-  assert.equal(p.shouldLoadIntoNet(cube1), true);
-  p.netChanged(); // user paints a new cube
-  assert.equal(p.shouldLoadIntoNet(net), false, 'unsaved painting is kept');
-  p.set(M.applyMoves(M.SOLVED, 'U'), 'End of Wire');
-  assert.equal(p.shouldLoadIntoNet(net), true);
-  assert.equal(p.shouldLoadIntoNet(M.applyMoves(M.SOLVED, 'U')), false, 'already the same');
-});
-
 test('playback tracks the real cube, except a preview from a solved cube that has not moved yet', () => {
   const label = o => S.trackPlayback(Object.assign({ total: 20, name: 'Superflip' }, o));
   assert.equal(label({ pos: 0, kind: 'pattern', startIsPhysical: false }), null);

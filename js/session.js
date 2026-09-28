@@ -1,5 +1,5 @@
 // App state that is easy to get wrong, kept out of the DOM code so it can be tested:
-// which cube the user physically holds ("my cube now"), and the debounced route finder.
+// how playback relabels My Cube, and the debounced route finder.
 (function (root, factory) {
   const isNode = typeof module === 'object' && module.exports;
   const api = isNode ? factory(require('./patterns.js')) : factory(root.CubePatterns);
@@ -8,21 +8,7 @@
 })(typeof self !== 'undefined' ? self : this, function (Pat) {
   'use strict';
 
-  // "My cube now", with a version so Solve only replaces the painted net with it when the real
-  // cube changed after the user last edited (or loaded) that net.
-  function createPhysical() {
-    let current = null, version = 0, netVersion = 0;
-    return {
-      get: () => current,
-      set(state, label) { current = { state: state.slice(), label }; version++; },
-      netChanged() { netVersion = version; },
-      shouldLoadIntoNet(netState) {
-        return !!current && version > netVersion && current.state.join('') !== netState.join('');
-      },
-    };
-  }
-
-  // Label for "my cube now" at a playback position, or null when playback must not claim the
+  // Label for My Cube at a playback position, or null when playback must not claim the
   // real cube (a preview that starts from a solved cube the user may not be holding).
   function trackPlayback({ pos, total, kind, name, custom, startIsPhysical }) {
     if (pos === 0 && !startIsPhysical) return null;
@@ -73,5 +59,5 @@
     return { request, get: () => state };
   }
 
-  return { createPhysical, trackPlayback, createRouteRequester };
+  return { trackPlayback, createRouteRequester };
 });
