@@ -71,3 +71,19 @@ test('six photos give back the scrambled cube', () => {
     assert.deepEqual(s.result().state, state);
   }
 });
+
+test('turning the cube as each instruction says and photographing the front rebuilds the cube', () => {
+  const D = require('../js/describe.js');
+  const rng = seededRng(5);
+  for (let n = 0; n < 10; n++) {
+    const state = M.applyMoves(M.SOLVED, M.randomScramble(25, rng));
+    const s = Scan.createScan();
+    for (const face of Scan.ORDER) {
+      const r = D.READING[face].rotation;
+      const view = r ? M.applyMoves(state, r) : state; // the cube as held for this photo
+      const photo = view.slice(18, 27); // what faces the camera, row by row as seen
+      s.setFace(face, photo.map(c => { const rgb = light(SHADES[c], 0.8 + rng() * 0.3, 0); return { rgb, lab: V.rgbToLab(rgb) }; }));
+    }
+    assert.deepEqual(s.result().state, state, `scramble ${n}`);
+  }
+});

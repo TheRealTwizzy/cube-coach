@@ -10,7 +10,7 @@ const SHADES = { w: [228, 228, 222], y: [236, 206, 38], g: [30, 160, 78], b: [28
 const light = (rgb, exposure, warm) => [rgb[0] * exposure * (1 + warm), rgb[1] * exposure, rgb[2] * exposure * (1 - warm)].map(v => Math.max(0, Math.min(255, v)));
 
 function renderFace(opts) {
-  const { width = 400, height = 300, corners, stickers, seed = 1, background = 'busy', noise = 8, glare = null, gap = 0.1, blur = 0, extra = [] } = opts;
+  const { width = 400, height = 300, corners, stickers, seed = 1, background = 'busy', noise = 8, glare = null, gap = 0.1, blur = 0, extra = [], reflection = null } = opts;
   const rng = seededRng(seed);
   const data = new Uint8ClampedArray(width * height * 4);
   const rects = background === 'busy'
@@ -39,6 +39,8 @@ function renderFace(opts) {
         c = [150 + 60 * (x / width), 140 + 50 * (y / height), 120];
         for (const r of rects) if (x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) c = r.c;
       }
+      // A glossy reflection: a blown-out band across the picture, e.g. { y0: 120, slope: 0.4, width: 26 }.
+      if (reflection && Math.abs(y - (reflection.y0 + reflection.slope * x)) < reflection.width / 2) c = [255, 255, 255];
       const k = (y * width + x) * 4;
       for (let ch = 0; ch < 3; ch++) data[k + ch] = c[ch] + (rng() * 2 - 1) * noise;
       data[k + 3] = 255;

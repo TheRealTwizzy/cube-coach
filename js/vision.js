@@ -137,12 +137,13 @@
       return m.map((row, c) => row[3] / row[c]);
     };
     const AtA = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], bx = [0, 0, 0], by = [0, 0, 0];
+    const full = Math.max(...matches.map(m => m.blob.area));
     for (const { i, j, blob } of matches) {
-      const a = [1, i, j];
+      const a = [1, i, j], wt = blob.area / full; // partly hidden stickers have shifted centroids; trust them less
       for (let r = 0; r < 3; r++) {
-        for (let c = 0; c < 3; c++) AtA[r][c] += a[r] * a[c];
-        bx[r] += a[r] * blob.x;
-        by[r] += a[r] * blob.y;
+        for (let c = 0; c < 3; c++) AtA[r][c] += wt * a[r] * a[c];
+        bx[r] += wt * a[r] * blob.x;
+        by[r] += wt * a[r] * blob.y;
       }
     }
     const X = solve3(AtA, bx), Y = solve3(AtA, by);
@@ -151,10 +152,12 @@
       s + Math.hypot(fit.c[0] + i * fit.u[0] + j * fit.v[0] - blob.x, fit.c[1] + i * fit.u[1] + j * fit.v[1] - blob.y), 0) / matches.length;
     return fit;
   }
-  function findGrid(img) {
+  // Stickers: bright, or clearly colored even in shade. Fill > 0.45 keeps squares tilted up to ~40 degrees.
+  const STICKER = p => p.v > 0.4 || (p.v > 0.35 && p.s > 0.3) || (p.v > 0.2 && p.s > 0.55);
+  // A glossy reflection is blown out (near 255 and colorless) and can join stickers across the black gaps.
+  const STICKER_NO_GLARE = p => STICKER(p) && !(p.v > 0.95 && p.s < 0.1);
+  function findGrid(img, sticker) {
     const { width: w, height: h } = img, total = w * h;
-    // Stickers: bright, or clearly colored even in shade. Fill > 0.45 keeps squares tilted up to ~40 degrees.
-    const sticker = p => p.v > 0.4 || (p.v > 0.35 && p.s > 0.3) || (p.v > 0.2 && p.s > 0.55);
     const blobs = components(maskOf(img, sticker), w, h).filter(b =>
       b.area > total * 0.001 && b.area < total * 0.12 && b.area / (b.bw * b.bh) > 0.45 && b.bw / b.bh > 0.5 && b.bw / b.bh < 2);
     let best = null;
@@ -215,7 +218,7 @@
   function findFace(img) {
     const small = downscale(img, 320), sx = img.width / small.width, sy = img.height / small.height;
     const scale = r => ({ corners: r.corners.map(([x, y]) => [x * sx, y * sy]), confidence: r.confidence });
-    const grid = findGrid(small);
+    const grid = findGrid(small, STICKER) || findGrid(small, STICKER_NO_GLARE);
     if (grid) return Object.assign(scale(grid), { method: 'grid' });
     const body = findBody(small);
     if (body) return Object.assign(scale(body), { method: 'body' });

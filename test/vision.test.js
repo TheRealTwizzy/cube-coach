@@ -174,3 +174,20 @@ test('classify reads red and orange right across photos with very different expo
   }
   assert.equal(wrong, 0, `${wrong}/100 cubes misread`);
 });
+
+test('a glossy reflection band: mostly still found, never a wrong grid', () => {
+  // A wide blown-out band hides parts of several stickers; when too little is left the finder must
+  // fall back (drag the corners) rather than lock onto a wrong grid.
+  const rng = seededRng(71);
+  let found = 0, wrongGrid = 0;
+  for (let k = 0; k < 10; k++) {
+    const size = 180, truth = placeFace({ cx: 200, cy: 150, size, angle: (rng() - 0.5) * 0.4 });
+    const img = renderFace({ corners: truth, stickers: mixedColors(rng), seed: 400 + k,
+      reflection: { y0: 60 + rng() * 120, slope: (rng() - 0.5) * 0.8, width: 18 + rng() * 14 } });
+    const f = V.findFace(img), err = cornerError(f.corners, truth, size);
+    if (f.method === 'grid' && err < 0.05) found++;
+    if (f.method === 'grid' && err > 0.15) wrongGrid++;
+  }
+  assert.ok(found >= 6, `${found}/10 found`);
+  assert.equal(wrongGrid, 0);
+});
