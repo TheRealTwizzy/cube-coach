@@ -38,6 +38,14 @@ test('first step flips the cube; steps carry labels', () => {
   for (let k = 1; k < steps.length; k++) assert.ok(steps[k].stage >= steps[k - 1].stage, 'stages in order');
 });
 
+test('corner-twist steps warn that the bottom layers look scrambled; others carry no note', () => {
+  const steps = B.solve(M.applyMoves(M.SOLVED, M.randomScramble(25, seededRng(11))));
+  const twists = steps.filter(st => st.algName.startsWith('Twist corner'));
+  assert.ok(twists.length > 0, 'scramble needs corner twists');
+  twists.forEach(st => assert.match(st.note, /bottom layers will look scrambled/i));
+  steps.filter(st => !st.algName.startsWith('Twist corner')).forEach(st => assert.equal(st.note, ''));
+});
+
 test('solves 300 random scrambles with every stage intact', () => {
   const rng = seededRng(2024);
   let total = 0;

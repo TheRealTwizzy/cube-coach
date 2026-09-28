@@ -14,7 +14,7 @@
 
   function toSteps(solution) {
     const moves = String(solution || '').trim().split(/\s+/).filter(Boolean);
-    return moves.map((move, k) => ({ move, stage: 1, stageName: STAGE_NAME, algName: '', alg: '', algPos: k, algLen: moves.length }));
+    return moves.map((move, k) => ({ move, stage: 1, stageName: STAGE_NAME, algName: '', alg: '', algPos: k, algLen: moves.length, note: '' }));
   }
   function solveWith(CubeLib, state) {
     if (M.isSolved(state)) return [];

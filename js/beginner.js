@@ -26,6 +26,7 @@
   const U_EDGES = M.EDGES.filter(sl => hasFace(sl, 'U'));
   const U_CORNERS = M.CORNERS.filter(sl => hasFace(sl, 'U'));
   const UFR_TOP = 8; // top sticker of the front-right-top corner
+  const TWIST_NOTE = 'The bottom layers will look scrambled while you twist these corners. Keep going: they come back once the last corner is done.';
 
   function stageDone(s, k) {
     switch (k) {
@@ -154,9 +155,9 @@
 
     const steps = [];
     let s = input.slice();
-    const push = (stage, name, moves) => {
+    const push = (stage, name, moves, note = '') => {
       moves.forEach((move, k) => {
-        steps.push({ move, stage, stageName: stageNames[stage], algName: name, alg: moves.join(' '), algPos: k, algLen: moves.length });
+        steps.push({ move, stage, stageName: stageNames[stage], algName: name, alg: moves.join(' '), algPos: k, algLen: moves.length, note });
         s = M.applyMove(s, move);
       });
     };
@@ -202,7 +203,7 @@
       if (k) push(7, 'Turn the top layer', [TURN[k - 1]]);
       for (let reps = 0; s[UFR_TOP] !== up; reps++) {
         if (reps >= 6) fail(7);
-        push(7, "Twist corner: repeat R' D' R D until the top color faces up", ["R'", "D'", 'R', 'D']);
+        push(7, "Twist corner: repeat R' D' R D until the top color faces up", ["R'", "D'", 'R', 'D'], TWIST_NOTE);
       }
     }
     if (!M.isSolved(s)) {

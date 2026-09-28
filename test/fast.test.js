@@ -19,7 +19,7 @@ test('toSteps shapes steps', () => {
   assert.deepEqual(Fast.toSteps(''), []);
   const steps = Fast.toSteps("R U' F2");
   assert.equal(steps.length, 3);
-  assert.deepEqual(steps[1], { move: "U'", stage: 1, stageName: 'Shortest solution', algName: '', alg: '', algPos: 1, algLen: 3 });
+  assert.deepEqual(steps[1], { move: "U'", stage: 1, stageName: 'Shortest solution', algName: '', alg: '', algPos: 1, algLen: 3, note: '' });
 });
 
 test('solves random scrambles in at most 22 turns', () => {
