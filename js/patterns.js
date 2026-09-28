@@ -200,6 +200,13 @@
   }
   const checkRoute = (from, plan, moves) => M.applyMoves(from, moves).join('') === plan.target.join('');
 
+  // What to tell the user when a pattern playback ends.
+  function endMessage({ final, picture, relabeled }) {
+    if (M.isSolved(picture)) return 'This sequence brings the cube back to solved.';
+    if (relabeled) return "Keep holding the cube as it is. Its colors differ from the picture's, so the pattern shows in your cube's own colors.";
+    return D.pictureHint(final, picture) || 'Your cube now shows the pattern.';
+  }
+
   function patternSteps({ name, start, moves, kind }) {
     const states = [start.slice()];
     moves.forEach((m, k) => states.push(M.applyMove(states[k], m)));
@@ -230,5 +237,5 @@
     return `<svg class="thumb" viewBox="-2.7 -3.1 5.4 6.2" aria-hidden="true">${body.join('')}${stickers.join('')}</svg>`;
   }
 
-  return { SOURCE, LIBRARY, entries, findByKey, fromAlgorithm, canonicalKey, matches, homes, planRoute, checkRoute, patternSteps, thumbnailSvg };
+  return { SOURCE, LIBRARY, entries, findByKey, fromAlgorithm, canonicalKey, matches, homes, planRoute, checkRoute, endMessage, patternSteps, thumbnailSvg };
 });

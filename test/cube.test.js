@@ -169,3 +169,13 @@ test('parseAlgorithm explains bad input', () => {
   assert.match(err('(R)5000'), /more than 1000 moves/);
   assert.match(err('   '), /at least one move/);
 });
+
+test('parseAlgorithm never hangs on repeated empty groups and explains inverted groups', () => {
+  const t0 = Date.now();
+  assert.match(M.parseAlgorithm('()99999999999').error, /at least one move/);
+  assert.deepEqual(M.parseAlgorithm('R (())99999999').moves, ['R']);
+  assert.match(M.parseAlgorithm('(R U)99999999').error, /more than 1000 moves/);
+  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0} ms`);
+  assert.match(M.parseAlgorithm("(R U)'").error, /Inverting a group/);
+  assert.match(M.parseAlgorithm("(R U R' U')2'").error, /Inverting a group/);
+});

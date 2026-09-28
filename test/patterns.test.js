@@ -156,3 +156,16 @@ test('thumbnail shows the top, front and right faces the right way round', () =>
   assert.ok(q(faceIdx('R')[3]).x < q(faceIdx('R')[5]).x, 'right face: front column drawn left');
   assert.ok(q(faceIdx('F')[1]).y < q(faceIdx('F')[7]).y, 'front face: top row drawn above');
 });
+
+test('end message: hold hint for turned routes, keep-as-is for other color schemes, solved sequences', () => {
+  const cic = entry('Cube in the cube').state;
+  assert.equal(P.endMessage({ final: cic, picture: cic, relabeled: false }), 'Your cube now shows the pattern.');
+  assert.match(P.endMessage({ final: M.applyMoves(cic, 'x2'), picture: cic, relabeled: false }), /Hold white on top and green facing you/);
+  const swap = c => (c === 'r' ? 'o' : c === 'o' ? 'r' : c);
+  const from = M.applyMoves(M.applyMoves(M.SOLVED, "R U F'"), 'x2').map(swap);
+  const plan = P.planRoute(from, cic);
+  const msg = P.endMessage({ final: plan.target, picture: cic, relabeled: plan.relabeled });
+  assert.doesNotMatch(msg, /Hold white on top/);
+  assert.match(msg, /Keep holding the cube as it is/);
+  assert.match(P.endMessage({ final: M.SOLVED, picture: M.SOLVED, relabeled: false }), /back to solved/);
+});

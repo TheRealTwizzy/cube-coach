@@ -9,6 +9,7 @@
   const D = window.CubeDescribe;
   const P = window.CubePlayer;
   const Pat = window.CubePatterns;
+  const S = window.CubeSession;
 
   const NAMES = D.NAMES;
   const FACE_WORD = D.FACE_WORD;
@@ -25,14 +26,18 @@
 
   const app = {
     mode: 'solve', state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false, view: null,
-    play: { kind: 'solve', method: 'fast', name: '', picture: null },
-    physical: null,          // { state, label }: the cube as the user last had it in their hands
+    play: { kind: 'solve', method: 'fast', name: '', picture: null, relabeled: false, startIsPhysical: true },
     sel: null,               // selected pattern { name, moves, state, custom, aliasText }
     startFrom: 'solved',     // 'solved' | 'now'
-    route: null,             // { key, status: 'waiting'|'loading'|'ready'|'error', plan, from, moves, message }
   };
   let netCells = [], miniCells = [], editorCells = [], nowCells = [], player = null;
-  let galleryBuilt = false, routeSeq = 0, routeTimer = null, customTimer = null;
+  let galleryBuilt = false, customTimer = null;
+  const physical = S.createPhysical(); // 'my cube now': the cube as the user last had it in their hands
+  const routes = S.createRouteRequester({
+    getStatus: () => Fast.getStatus(),
+    solve: input => Fast.solve(input).then(steps => steps.map(st => st.move)),
+    onChange: () => renderPatternDetail(),
+  });
 
   const colorName = (s, f) => NAMES[M.centerColor(s, f)];
   const statesFrom = (start, steps) => steps.reduce((acc, st) => { acc.push(M.applyMove(acc[acc.length - 1], st.move)); return acc; }, [start.slice()]);
@@ -40,7 +45,6 @@
     try { resolve(fn()); } catch (e) { reject(e); }
   }, 30));
   function showBanner(text) { const b = $('banner'); b.textContent = text; b.hidden = false; }
-  function setPhysical(state, label) { app.physical = { state: state.slice(), label }; }
 
   // ---------- panels and modes ----------
   function showPanel(name) {
@@ -55,6 +59,7 @@
     $('mode-patterns').setAttribute('aria-pressed', String(app.mode === 'patterns'));
   }
   function setMode(mode) {
+    cancelCustomInput();
     player.afterTurn(() => {
       app.mode = mode;
       renderModeSwitch();
@@ -64,8 +69,9 @@
   }
   function enterSolve() {
     showPanel('input');
-    if (app.physical && app.physical.state.join('') !== app.state.join('')) {
-      setInputState(app.physical.state, `Loaded from: ${app.physical.label}. If your real cube looks different, paint over it.`);
+    if (physical.shouldLoadIntoNet(app.state)) {
+      const now = physical.get();
+      setInputState(now.state, `Loaded from: ${now.label}. If your real cube looks different, paint over it.`);
     } else {
       renderInput();
     }
@@ -73,7 +79,8 @@
   function enterPatterns() {
     buildGallery();
     showPanel('patterns');
-    app.startFrom = app.physical && !M.isSolved(app.physical.state) ? 'now' : 'solved';
+    const now = physical.get();
+    app.startFrom = now && !M.isSolved(now.state) ? 'now' : 'solved';
     showPatternInView();
     renderPatternDetail();
     requestRoute();
@@ -177,6 +184,7 @@
     app.state = app.state.slice();
     app.state[i] = app.color;
     app.bad.delete(i);
+    physical.netChanged();
     renderInput();
   }
   function setNote(content) {
@@ -189,6 +197,7 @@
     if (app.busy) return;
     app.state = next.slice();
     app.bad = new Set();
+    physical.netChanged();
     renderErrors([]);
     setNote(note || '');
     renderInput();
@@ -240,14 +249,15 @@
     if (!result.ok) return;
     // Snapshot what was validated; the solution must match this cube even if the UI changes meanwhile.
     const input = app.state.slice(), method = app.method;
-    setPhysical(input, 'Your checked cube');
+    physical.set(input, 'Your checked cube');
+    physical.netChanged();
     app.busy = true;
     renderSolveButton();
     try {
       const steps = method === 'fast' ? await Fast.solve(input) : await later(() => Beginner.solve(input));
       if (app.mode !== 'solve') return;
       app.state = input;
-      startPlayback({ states: statesFrom(input, steps), steps, kind: 'solve', method, name: '', picture: null });
+      startPlayback({ states: statesFrom(input, steps), steps, kind: 'solve', method, name: '', picture: null, relabeled: false, startIsPhysical: true });
     } catch (err) {
       renderErrors([{
         message: err.code === 'SOLVER_RESTARTING'
@@ -299,70 +309,62 @@
     const idx = app.sel && !app.sel.custom ? String(app.sel.index) : null;
     $('gallery').querySelectorAll('.pcard').forEach(c => c.setAttribute('aria-pressed', String(c.dataset.index === idx)));
   }
+  const patternsVisible = () => !$('pattern-panel').hidden;
   function showPatternInView() {
-    if (app.view) app.view.setState(app.sel ? app.sel.state : app.physical ? app.physical.state : M.SOLVED);
+    if (!patternsVisible() || !app.view) return;
+    const now = physical.get();
+    app.view.setState(app.sel ? app.sel.state : now ? now.state : M.SOLVED);
   }
-  function selectPattern(sel) {
+  function selectPattern(sel, scroll) {
     app.sel = sel;
     markCards();
     showPatternInView();
     renderPatternDetail();
     requestRoute();
-    if (narrow()) $('pattern-detail').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
+    if (scroll && narrow()) $('pattern-detail').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
   }
   function onCustomInput() {
+    customTimer = null;
+    if (!patternsVisible()) return;
     const text = $('custom-alg').value;
-    if (!text.trim()) { $('custom-error').textContent = ''; return; }
-    const r = Pat.fromAlgorithm(text);
-    if (r.error) {
-      $('custom-error').textContent = r.error;
+    const clearCustom = () => {
       if (app.sel && app.sel.custom) { app.sel = null; markCards(); showPatternInView(); renderPatternDetail(); }
-      return;
-    }
+    };
+    if (!text.trim()) { $('custom-error').textContent = ''; clearCustom(); return; }
+    const r = Pat.fromAlgorithm(text);
+    if (r.error) { $('custom-error').textContent = r.error; clearCustom(); return; }
     $('custom-error').textContent = '';
     const same = Pat.findByKey(Pat.canonicalKey(r.state));
     const aliasText = same ? `Makes the same pattern as ${same.name}` : M.isSolved(r.state) ? 'This sequence leaves the cube solved' : '';
-    selectPattern({ name: 'Your sequence', moves: r.moves, state: r.state, custom: true, aliasText });
+    selectPattern({ name: 'Your sequence', moves: r.moves, state: r.state, custom: true, aliasText }, false);
   }
-  const routeKey = () => (app.sel && app.physical ? app.physical.state.join('') + '|' + app.sel.state.join('') : '');
+  // Apply a custom-box parse that is still waiting on its debounce (before acting on the selection).
+  function flushCustomInput() {
+    if (customTimer === null) return;
+    clearTimeout(customTimer);
+    onCustomInput();
+  }
+  function cancelCustomInput() {
+    clearTimeout(customTimer);
+    customTimer = null;
+  }
+  const routeKey = () => {
+    const now = physical.get();
+    return app.sel && now ? now.state.join('') + '|' + app.sel.state.join('') : '';
+  };
   function requestRoute() {
-    clearTimeout(routeTimer);
-    if (app.mode !== 'patterns' || app.startFrom !== 'now' || !app.sel || !app.physical) { renderPatternDetail(); return; }
-    const key = routeKey();
-    if (app.route && app.route.key === key && (app.route.status === 'ready' || app.route.status === 'loading')) { renderPatternDetail(); return; }
-    const from = app.physical.state.slice(), picture = app.sel.state.slice(), seq = ++routeSeq;
-    if (Fast.getStatus() !== 'ready') { app.route = { key, status: 'waiting' }; renderPatternDetail(); return; }
-    let plan;
-    try {
-      plan = Pat.planRoute(from, picture);
-    } catch (err) {
-      app.route = { key, status: 'error', message: err.message };
-      renderPatternDetail();
-      return;
-    }
-    app.route = { key, status: 'loading', plan, from };
+    const now = physical.get();
+    if (app.mode === 'patterns' && app.startFrom === 'now' && app.sel && now) routes.request(now.state, app.sel.state);
     renderPatternDetail();
-    routeTimer = setTimeout(async () => {
-      try {
-        const moves = (await Fast.solve(plan.input)).map(st => st.move);
-        if (seq !== routeSeq) return;
-        if (!Pat.checkRoute(from, plan, moves)) throw new Error('the route did not reach the pattern');
-        app.route = { key, status: 'ready', plan, from, moves };
-      } catch (err) {
-        if (seq !== routeSeq) return;
-        app.route = {
-          key, status: 'error',
-          message: err.code === 'SOLVER_RESTARTING'
-            ? 'The route finder stopped and is restarting. Pick the pattern again in a few seconds.'
-            : `Couldn't find a route (${err.message}). Please report this cube code: ${M.toFaceletString(from)}`,
-        };
-      }
-      renderPatternDetail();
-    }, 150);
+  }
+  function routeMessage(r) {
+    if (r.code === 'SOLVER_RESTARTING') return 'The route finder stopped and is restarting. Pick the pattern again in a few seconds.';
+    return `Couldn't find a route (${r.message}). Please report this cube code: ${M.toFaceletString(physical.get().state)}`;
   }
   function renderPatternDetail() {
-    const sel = app.sel;
-    renderHold(app.startFrom === 'now' && app.physical ? app.physical.state : M.SOLVED);
+    if (!patternsVisible()) return;
+    const sel = app.sel, now = physical.get();
+    renderHold(app.startFrom === 'now' && now ? now.state : M.SOLVED);
     $('pd-empty').hidden = !!sel;
     $('pd-body').hidden = !sel;
     if (!sel) return;
@@ -370,23 +372,22 @@
     $('pd-alias').textContent = sel.aliasText || '';
     $('pd-alg').textContent = sel.moves.join(' ');
     $('from-solved-info').textContent = `${sel.moves.length} moves from a solved cube`;
-    const nowOk = !!app.physical;
-    if (!nowOk && app.startFrom === 'now') app.startFrom = 'solved';
-    $('from-now').disabled = !nowOk;
-    $('from-now-info').textContent = nowOk ? 'Direct route, about 20 turns' : 'Enter and check your cube in Solve first';
+    if (!now && app.startFrom === 'now') app.startFrom = 'solved';
+    $('from-now').disabled = !now;
+    $('from-now-info').textContent = now ? 'Direct route, about 20 turns' : 'Enter and check your cube in Solve first';
     $('from-solved').checked = app.startFrom === 'solved';
     $('from-now').checked = app.startFrom === 'now';
     $('pd-now').hidden = app.startFrom !== 'now';
     let status = '', canShow = true;
     if (app.startFrom === 'now') {
-      paintNet(nowCells, app.physical.state, null);
-      $('now-label').textContent = `My cube now: ${app.physical.label}. If your real cube looks different, switch to Solve and paint it.`;
-      const r = app.route, st = Fast.getStatus();
+      paintNet(nowCells, now.state, null);
+      $('now-label').textContent = `My cube now: ${now.label}. If your real cube looks different, switch to Solve and paint it.`;
+      const r = routes.get(), st = Fast.getStatus();
       canShow = false;
       if (st === 'failed') status = "The route finder couldn't load. Start from a solved cube instead.";
       else if (!r || r.key !== routeKey() || r.status === 'waiting') status = st === 'ready' ? 'Finding the shortest route…' : 'Preparing solver…';
-      else if (r.status === 'loading') status = 'Finding the shortest route…';
-      else if (r.status === 'error') status = r.message;
+      else if (r.status === 'queued' || r.status === 'loading') status = 'Finding the shortest route…';
+      else if (r.status === 'error') status = routeMessage(r);
       else if (!r.moves.length) status = 'Your cube already shows this pattern.';
       else { status = `Route found: ${r.moves.length} turns.`; canShow = true; }
     }
@@ -394,22 +395,24 @@
     $('btn-show').disabled = !canShow;
   }
   function showMe() {
+    flushCustomInput();
     const sel = app.sel;
     if (!sel) return;
-    let start, moves, kind;
+    let start, moves, kind, relabeled = false;
     if (app.startFrom === 'solved') {
       start = M.SOLVED; moves = sel.moves; kind = 'solved';
     } else {
-      if (!app.route || app.route.status !== 'ready' || app.route.key !== routeKey()) return;
-      start = app.route.from; moves = app.route.moves; kind = 'route';
+      const r = routes.get();
+      if (!r || r.status !== 'ready' || r.key !== routeKey() || !r.moves.length) return;
+      start = r.from; moves = r.moves; kind = 'route'; relabeled = r.plan.relabeled;
     }
     const { states, steps } = Pat.patternSteps({ name: sel.name, start, moves, kind });
-    startPlayback({ states, steps, kind: 'pattern', method: 'fast', name: sel.name, picture: sel.state });
+    startPlayback({ states, steps, kind: 'pattern', method: 'fast', name: sel.name, picture: sel.state, relabeled, startIsPhysical: kind === 'route' });
   }
 
   // ---------- playback ----------
   function startPlayback(play) {
-    app.play = { kind: play.kind, method: play.method, name: play.name, picture: play.picture };
+    app.play = play;
     showPanel('play');
     $('btn-edit').textContent = play.kind === 'pattern' ? '← Patterns' : '← Edit cube';
     if (app.view) app.view.resetView();
@@ -471,19 +474,14 @@
       el.appendChild(span);
     });
   }
-  function physicalLabel(pos, total) {
-    const what = app.play.kind === 'pattern' ? app.play.name : 'your solve';
-    if (pos === 0) return app.play.kind === 'pattern' ? `Start of ${what}` : 'Your checked cube';
-    if (pos >= total) return `End of ${what}`;
-    return `After turn ${pos} of ${total} · ${what}`;
-  }
   function renderPlay(p) {
     if ($('play-panel').hidden) return;
     const total = p.steps.length, pos = p.pos, cur = p.states[pos], step = p.steps[pos];
     const pattern = app.play.kind === 'pattern';
     if (!p.busy) {
       if (app.view) app.view.setState(cur);
-      setPhysical(cur, physicalLabel(pos, total));
+      const label = S.trackPlayback({ pos, total, kind: app.play.kind, name: app.play.name, startIsPhysical: app.play.startIsPhysical });
+      if (label) physical.set(cur, label);
     }
     $('counter').textContent = total ? (step ? `Turn ${pos + 1} of ${total}` : `Done · ${total} turns`) : '';
     $('progress-bar').style.width = total ? `${(pos / total) * 100}%` : '100%';
@@ -491,12 +489,11 @@
     paintNet(miniCells, cur, null);
     $('card').classList.toggle('finished', !step);
     if (!step) {
-      const hint = pattern ? D.pictureHint(cur, app.play.picture) : '';
       $('card-stage').textContent = total ? 'Finished' : 'Nothing to do';
       $('card-move').textContent = pattern ? 'Done' : 'Solved';
       $('card-title').textContent = pattern ? app.play.name : total ? `${total} turns` : 'Already solved';
       $('card-detail').textContent = pattern
-        ? `${hint || 'Your cube now shows the pattern.'} Pick another pattern to go straight there, or switch to Solve to solve it back.`
+        ? `${Pat.endMessage({ final: cur, picture: app.play.picture, relabeled: app.play.relabeled })} Pick another pattern to go straight there, or switch to Solve to solve it back.`
         : total ? 'Your cube should now be solved. Use back or the turn list to review any turn.'
           : 'This cube is already solved. Go back and enter a scrambled cube.';
       $('card-alg').textContent = '';
@@ -584,9 +581,10 @@
     $('gallery').addEventListener('click', e => {
       const card = e.target.closest('.pcard');
       if (!card) return;
+      cancelCustomInput();
       const entry = Pat.entries()[Number(card.dataset.index)];
       selectPattern({ index: entry.index, name: entry.name, moves: entry.moves, state: entry.state, custom: false,
-        aliasText: entry.aliases.length ? `Also called ${entry.aliases.join(', ')}` : '' });
+        aliasText: entry.aliases.length ? `Also called ${entry.aliases.join(', ')}` : '' }, true);
     });
     document.querySelectorAll('input[name="from"]').forEach(r => r.addEventListener('change', () => {
       app.startFrom = r.value;

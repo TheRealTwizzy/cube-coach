@@ -175,10 +175,10 @@
         const rep = /^[x×*]?(\d+)/.exec(src.slice(i));
         const times = rep ? Number(rep[1]) : 1;
         if (rep) i += rep[0].length;
-        for (let k = 0; k < times; k++) {
-          stack[stack.length - 1].push(...group);
-          if (tooLong()) return fail(`That's more than ${maxMoves} moves.`);
-        }
+        if (src[i] === "'") return fail("Inverting a group like (R U)' isn't supported. Write its moves out in reverse instead.");
+        const total = stack.reduce((n, g) => n + g.length, 0) + group.length * times;
+        if (group.length && total > maxMoves) return fail(`That's more than ${maxMoves} moves.`);
+        for (let k = 0; group.length && k < times; k++) stack[stack.length - 1].push(...group);
         continue;
       }
       if (ch === '[' || ch === ']') return fail('Brackets like [R, U] are not supported. Write the moves out in full.');
