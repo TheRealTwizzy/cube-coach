@@ -1,0 +1,245 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cube Coach</title>
+<meta name="description" content="Paint your Rubik's cube colors, then follow an animated solve one turn at a time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  :root {
+    --ground: #e8ebef; --surface: #f7f8fa; --surface-2: #eef1f5; --ink: #15181d; --muted: #566070;
+    --line: #cdd3dc; --accent: #1d4ed8; --accent-ink: #ffffff; --danger: #c01731; --plastic: #17191d;
+    --c-w: #f4f4ef; --c-y: #ffd200; --c-g: #00a04a; --c-b: #0b4fc4; --c-r: #c8102e; --c-o: #ff6a13; --c-x: #b3bac4;
+    --font-body: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-display: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground: #101216; --surface: #181b21; --surface-2: #1f232a; --ink: #e7eaef; --muted: #9aa3b0;
+      --line: #2d323b; --accent: #7a9bff; --accent-ink: #0c1330; --danger: #ff6b7f; --c-x: #4a515c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #101216; --surface: #181b21; --surface-2: #1f232a; --ink: #e7eaef; --muted: #9aa3b0;
+    --line: #2d323b; --accent: #7a9bff; --accent-ink: #0c1330; --danger: #ff6b7f; --c-x: #4a515c;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font: 16px/1.5 var(--font-body); padding-inline: 16px; }
+  button { font: inherit; color: inherit; }
+  code { font-family: var(--font-mono); font-size: .92em; }
+  .wrap { max-width: 1180px; margin-inline: auto; padding-block: 20px 48px; display: grid; gap: 20px; }
+
+  .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand h1 { margin: 0; font: 700 32px/1 var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
+  .logo { display: grid; grid-template-columns: repeat(3, 9px); gap: 2px; padding: 3px; background: var(--plastic); border-radius: 5px; }
+  .logo i { width: 9px; height: 9px; border-radius: 2px; background: var(--c); }
+  .hold { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 14px; }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; background: var(--c); box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
+  .banner { margin: 0; padding: 10px 14px; border: 1px solid var(--danger); border-radius: 10px; background: var(--surface); }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  .viewer { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); display: grid; gap: 8px; }
+  #view { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 78vh; overflow: hidden; border-radius: 16px;
+    border: 1px solid var(--line); background: radial-gradient(circle at 50% 40%, var(--surface) 0%, var(--surface-2) 75%); }
+  #view canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  .no3d { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--muted); }
+  .view-note { margin: 0; text-align: center; color: var(--muted); font-size: 13px; }
+
+  .panel { display: grid; gap: 24px; min-width: 0; }
+  .section { display: grid; gap: 12px; min-width: 0; }
+  .section h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font: 700 21px/1.1 var(--font-display);
+    letter-spacing: .03em; text-transform: uppercase; text-wrap: balance; }
+  .section h2 .n { font: 600 13px/1 var(--font-mono); color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tip, .status { margin: 0; color: var(--muted); font-size: 14px; }
+
+  .btn { padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-weight: 500; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { justify-self: start; padding: 12px 22px; border-color: transparent; background: var(--accent); color: var(--accent-ink);
+    font: 700 19px/1 var(--font-display); letter-spacing: .04em; text-transform: uppercase; }
+  .btn:disabled, .icon-btn:disabled { opacity: .5; cursor: not-allowed; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  .palette { display: flex; flex-wrap: wrap; gap: 8px; }
+  .swatch { position: relative; width: 46px; height: 46px; border: 2px solid var(--line); border-radius: 10px; background: var(--c); cursor: pointer; }
+  .swatch[aria-pressed="true"] { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .swatch kbd { position: absolute; right: 3px; bottom: 3px; padding: 0 3px; border-radius: 3px; background: rgba(255,255,255,.8);
+    color: #15181d; font: 600 10px/1.4 var(--font-mono); }
+
+  .net { --s: clamp(22px, 6vw, 34px); display: grid; grid-template-columns: repeat(4, max-content); gap: 6px; }
+  .net.mini { --s: 13px; gap: 3px; }
+  .face { display: grid; gap: 4px; align-content: end; }
+  .face-label { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(3, var(--s)); gap: 3px; padding: 3px; border-radius: 7px; background: var(--plastic); }
+  .net.mini .grid { gap: 2px; padding: 2px; border-radius: 4px; }
+  .face.active .grid { box-shadow: 0 0 0 3px var(--accent); }
+  .st { display: block; width: var(--s); height: var(--s); padding: 0; border: 0; border-radius: 4px; background: var(--c, var(--c-x)); }
+  .net.mini .st { border-radius: 2px; }
+  button.st { cursor: pointer; }
+  button.st:hover { filter: brightness(1.1); }
+  .st.bad { position: relative; outline: 3px solid var(--danger); outline-offset: 1px; animation: pulse 1.2s ease-in-out 2; }
+  @keyframes pulse { 50% { outline-color: transparent; } }
+
+  .hint { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 15px; max-width: 65ch; }
+  .hint b { font-weight: 600; }
+
+  .methods { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .method { position: relative; display: grid; gap: 2px; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 12px;
+    background: var(--surface); cursor: pointer; }
+  .method input { position: absolute; opacity: 0; pointer-events: none; }
+  .method:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .method:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .method:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+  .method strong { font: 700 19px/1.1 var(--font-display); letter-spacing: .03em; text-transform: uppercase; }
+  .method span { color: var(--muted); font-size: 14px; }
+
+  .errors { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .errors li { padding: 10px 12px; border: 1px solid var(--danger); border-radius: 10px; background: var(--surface); }
+  .errors li.tip { border-color: var(--line); }
+
+  .play-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+  .counter { font: 600 14px/1 var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .card { display: grid; gap: 8px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+  .card .stage { font: 600 12px/1.3 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .card .move { font: 600 clamp(56px, 12vw, 88px)/1 var(--font-mono); letter-spacing: -.02em; }
+  .card.finished .move { font-family: var(--font-display); text-transform: uppercase; color: var(--c-g); }
+  .card .move-title { font: 700 23px/1.15 var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
+  .card .detail { margin: 0; color: var(--muted); max-width: 60ch; }
+  .alg { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font: 500 15px/1.6 var(--font-mono); }
+  .alg:empty { display: none; }
+  .alg .name { flex-basis: 100%; font: 600 14px/1.4 var(--font-body); }
+  .alg .m { color: var(--muted); }
+  .alg .m.done { color: var(--ink); }
+  .alg .m.now { padding: 0 4px; border-radius: 4px; color: var(--ink); outline: 1.5px solid var(--accent); background: var(--surface-2); }
+
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .icon-btn { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--line); border-radius: 12px;
+    background: var(--surface); cursor: pointer; }
+  .icon-btn.big { width: 64px; border-color: transparent; background: var(--accent); color: var(--accent-ink); }
+  .icon-btn svg { width: 22px; height: 22px; fill: currentColor; }
+  .speed { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--muted); font-size: 14px; }
+  .speed input { width: 120px; accent-color: var(--accent); }
+  .progress { height: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); }
+  .progress > div { width: 0; height: 100%; background: var(--accent); transition: width .2s; }
+  .moves { position: relative; display: grid; gap: 12px; max-height: 260px; overflow: auto; padding-right: 4px; }
+  .moves h3 { margin: 0 0 6px; font: 600 12px/1.2 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { min-width: 36px; padding: 6px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+    color: var(--muted); font: 500 14px/1 var(--font-mono); cursor: pointer; }
+  .chip.done { background: var(--surface-2); color: var(--ink); }
+  .chip.now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    .viewer { position: static; }
+    #view { aspect-ratio: 4 / 3; max-height: 46vh; }
+  }
+  @media (max-width: 440px) {
+    .methods { grid-template-columns: 1fr; }
+    .speed { margin-left: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <i style="--c:var(--c-r)"></i><i style="--c:var(--c-w)"></i><i style="--c:var(--c-b)"></i>
+        <i style="--c:var(--c-y)"></i><i style="--c:var(--c-g)"></i><i style="--c:var(--c-o)"></i>
+        <i style="--c:var(--c-g)"></i><i style="--c:var(--c-r)"></i><i style="--c:var(--c-w)"></i>
+      </div>
+      <h1>Cube Coach</h1>
+    </div>
+    <div class="hold" id="hold" aria-live="polite"></div>
+  </header>
+  <p class="banner" id="banner" role="alert" hidden></p>
+
+  <main class="layout">
+    <section class="viewer" aria-label="3D cube">
+      <div id="view"></div>
+      <p class="view-note">Drag to look around. Double-click to reset the view.</p>
+    </section>
+
+    <section class="panel" id="input-panel" aria-label="Enter your cube">
+      <div class="section">
+        <h2><span class="n">1</span>Paint your cube</h2>
+        <div class="palette" id="palette" role="group" aria-label="Sticker color"></div>
+        <div class="net" id="net"></div>
+        <div class="hint" id="hint" aria-live="polite"></div>
+        <div class="row">
+          <button class="btn" id="btn-example" type="button">New example</button>
+          <button class="btn" id="btn-solved" type="button">Solved cube</button>
+          <button class="btn" id="btn-clear" type="button">Clear</button>
+        </div>
+        <p class="tip" id="scramble-note"></p>
+      </div>
+      <div class="section">
+        <h2><span class="n">2</span>Pick a method</h2>
+        <div class="methods" role="radiogroup" aria-label="Solving method">
+          <label class="method"><input type="radio" name="method" id="m-fast" value="fast" checked>
+            <strong>Shortest</strong><span>About 20 turns. Quickest to follow.</span></label>
+          <label class="method"><input type="radio" name="method" id="m-beginner" value="beginner">
+            <strong>Beginner</strong><span>Around 160 turns in 7 stages you can learn.</span></label>
+        </div>
+      </div>
+      <div class="section">
+        <h2><span class="n">3</span>Solve</h2>
+        <button class="btn primary" id="btn-solve" type="button">Solve my cube</button>
+        <p class="status" id="solver-status" aria-live="polite"></p>
+        <ul class="errors" id="errors" aria-live="polite"></ul>
+      </div>
+    </section>
+
+    <section class="panel" id="play-panel" aria-label="Solution" hidden>
+      <div class="play-head">
+        <button class="btn" id="btn-edit" type="button">← Edit cube</button>
+        <span class="counter" id="counter"></span>
+      </div>
+      <div class="card" id="card" aria-live="polite">
+        <div class="stage" id="card-stage"></div>
+        <div class="move" id="card-move"></div>
+        <div class="move-title" id="card-title"></div>
+        <p class="detail" id="card-detail"></p>
+        <div class="alg" id="card-alg"></div>
+      </div>
+      <div class="controls">
+        <button class="icon-btn" id="btn-restart" type="button" aria-label="Back to the start">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h2v14H5zM19 5v14L9 12z"/></svg></button>
+        <button class="icon-btn" id="btn-prev" type="button" aria-label="Undo the last turn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5v14L6 12z"/></svg></button>
+        <button class="icon-btn big" id="btn-play" type="button" aria-label="Play all turns"></button>
+        <button class="icon-btn" id="btn-next" type="button" aria-label="Do this turn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg></button>
+        <label class="speed" for="speed">Speed <input type="range" id="speed" min="1" max="10" step="1" value="5"></label>
+      </div>
+      <div class="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+      <div class="section">
+        <h2>All turns</h2>
+        <div class="moves" id="moves"></div>
+      </div>
+      <div class="section">
+        <h2>Every side right now</h2>
+        <div class="net mini" id="mini-net"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cubejs@1.3.2/lib/cube.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cubejs@1.3.2/lib/solve.js"></script>
+<script src="js/cube.js"></script>
+<script src="js/validate.js"></script>
+<script src="js/fast.js"></script>
+<script src="js/beginner.js"></script>
+<script src="js/view3d.js"></script>
+<script src="js/app.js"></script>
