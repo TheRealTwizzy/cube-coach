@@ -27,7 +27,7 @@
 
   const app = {
     state: M.SOLVED.slice(), color: 'w', face: 'F', bad: new Set(), method: 'fast', busy: false,
-    steps: [], states: [], pos: 0, playing: false, speed: 5, view: null,
+    steps: [], states: [], pos: 0, playMethod: 'fast', playing: false, speed: 5, view: null,
   };
   let netCells = [], miniCells = [], playTimer = null;
 
@@ -129,6 +129,7 @@
     if (app.view) app.view.setState(app.state);
   }
   function setInputState(next, noteHtml) {
+    if (app.busy) return;
     app.state = next;
     app.bad = new Set();
     renderErrors([]);
@@ -177,13 +178,16 @@
     renderErrors(result.errors);
     renderInput();
     if (!result.ok) return;
+    // Snapshot what was validated; the solution must match this cube even if the UI changes meanwhile.
+    const input = app.state.slice(), method = app.method;
     app.busy = true;
     renderSolveButton();
     try {
-      const steps = app.method === 'fast' ? await Fast.solve(app.state) : await later(() => Beginner.solve(app.state));
-      startPlayback(steps);
+      const steps = method === 'fast' ? await Fast.solve(input) : await later(() => Beginner.solve(input));
+      app.state = input;
+      startPlayback(steps, method);
     } catch (err) {
-      renderErrors([{ message: `The solver failed on this cube (${err.message}). Please report this cube code: ${M.toFaceletString(app.state)}`, cells: [] }]);
+      renderErrors([{ message: `The solver failed on this cube (${err.message}). Please report this cube code: ${M.toFaceletString(input)}`, cells: [] }]);
     } finally {
       app.busy = false;
       renderSolveButton();
@@ -201,7 +205,8 @@
     const dir = cw ? 'clockwise' : 'counter-clockwise';
     return { title: `${face} face, ${dir}`, detail: `Quarter turn ${dir}, as if you were looking straight at the ${lower} face: ${TURN_HINT[m[0]][cw ? 0 : 1]}.` };
   }
-  function startPlayback(steps) {
+  function startPlayback(steps, method) {
+    app.playMethod = method;
     app.steps = steps;
     app.states = [app.state.slice()];
     steps.forEach((st, k) => app.states.push(M.applyMove(app.states[k], st.move)));
@@ -230,7 +235,7 @@
       if (st.stage !== stage) {
         stage = st.stage;
         const sec = document.createElement('div');
-        if (app.method === 'beginner') {
+        if (app.playMethod === 'beginner') {
           const h = document.createElement('h3');
           h.textContent = st.stage === 0 ? st.stageName : `${st.stage}. ${st.stageName}`;
           sec.appendChild(h);
@@ -287,7 +292,7 @@
       $('card-alg').textContent = '';
     } else {
       const d = describeMove(step.move);
-      $('card-stage').textContent = app.method === 'beginner'
+      $('card-stage').textContent = app.playMethod === 'beginner'
         ? (step.stage === 0 ? 'Before you start' : `Stage ${step.stage} of 7 · ${step.stageName}`)
         : 'Next turn';
       $('card-move').textContent = step.move;
@@ -376,7 +381,7 @@
   function wire() {
     $('net').addEventListener('click', e => {
       const el = e.target.closest('button.st');
-      if (!el) return;
+      if (!el || app.busy) return;
       const i = Number(el.dataset.i);
       app.face = M.FACELETS[i].face;
       app.state = app.state.slice();
