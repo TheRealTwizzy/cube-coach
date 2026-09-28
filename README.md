@@ -6,7 +6,7 @@ A 3x3 Rubik's cube coach that runs in the browser: set up a digital twin of your
 
 ## What it does
 
-- **My Cube**: scan your cube with your phone (one photo per face, with how to hold the cube for each photo) or paint its stickers, then confirm it. The app checks it is a real, solvable cube.
+- **My Cube**: scan your cube with your phone's camera (hold each face up and it captures by itself, with how to hold the cube for each face; one photo per face where a live camera isn't available) or paint its stickers, then confirm it. The app checks it is a real, solvable cube.
 - **Solve**: *Shortest* (about 20 turns, Kociemba's two-phase algorithm) or *Beginner* (layer by layer, 7 named stages with the algorithms beginners learn).
 - **Patterns**: 109 named patterns plus any move sequence you paste (`R U R' U'`, `M2 E2 S2`, `(R U)3`, `Rw`…). From a solved cube it plays the pattern's own moves; from any other cube it finds a direct route of about 20 turns.
 - Every turn is animated and described in plain words ("Top face, clockwise: the front row slides to the left"), with a speed control. My Cube follows along as you turn.

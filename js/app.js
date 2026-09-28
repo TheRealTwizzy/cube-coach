@@ -85,6 +85,7 @@
       return;
     }
     cancelCustomInput();
+    if (mode !== 'cube') stopLive(); // camera off whenever My Cube is not on screen
     player.afterTurn(() => {
       app.mode = mode;
       renderModeSwitch();
@@ -96,6 +97,7 @@
   function enterCube() {
     showPanel('cube', true);
     renderCube();
+    if (scan) startLive();
   }
   function enterSolve() {
     showPanel('solve', true);
@@ -276,8 +278,12 @@
     renderCube();
   }
 
-  // ---------- scanning (one photo per face; the camera is opened through a file input) ----------
+  // ---------- scanning ----------
+  // One capture per face. Where the page may use the camera (GitHub Pages, localhost) a live view
+  // finds the face as you hold it up and captures once it is steady; elsewhere (the claude.ai link)
+  // the phone's camera app is opened through a file input to take a photo.
   let scan = null, shot = null, photoSeq = 0, cancelArmed = null;
+  let live = null, liveSeq = 0, preferLive = true;
   function startScan() {
     scan = ScanLib.createScan();
     shot = null;
@@ -288,10 +294,13 @@
     $('confirm-section').hidden = true;
     $('scan-area').hidden = false;
     $('scan-msg').textContent = '';
+    preferLive = true;
     renderScan();
     $('scan-take').focus({ preventScroll: true });
+    startLive();
   }
   function endScan() {
+    stopLive();
     scan = null;
     shot = null;
     photoSeq++;
@@ -309,8 +318,10 @@
     const stepText = `Photo ${step.index + 1} of ${step.total} · ${FACE_WORD[step.face]} face`;
     if ($('scan-step').textContent !== stepText) $('scan-live').textContent = `${stepText}. ${step.instruction}`;
     $('scan-step').textContent = stepText;
-    $('scan-hold').textContent = `${step.instruction} Fill most of the photo with that face.`;
-    $('scan-take').hidden = !!shot;
+    const camOn = !!live && !shot;
+    $('scan-hold').textContent = `${step.instruction} ${camOn ? 'Hold that face flat to the camera so it fills most of the view.' : 'Fill most of the photo with that face.'}`;
+    $('scan-cam-box').hidden = !camOn;
+    $('scan-take').hidden = !!shot || camOn;
     $('scan-photo').hidden = !shot;
     $('scan-read').hidden = !shot;
     $('scan-actions').hidden = !shot;
@@ -351,7 +362,13 @@
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
     if (source.close) source.close(); // a full-size photo bitmap is tens of MB
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const found = Vis.findFace(img), q = Vis.quality(img);
+    showShot(img, Vis.findFace(img), Vis.quality(img));
+  }
+  // Show a captured face (from a photo or the live camera) for review: grid, corners, read colors.
+  function showShot(img, found, q) {
+    const canvas = $('scan-canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
     shot = { img, corners: found.corners };
     $('scan-anyway').hidden = true;
     const msgs = [];
@@ -455,6 +472,101 @@
     $('scan-anyway').hidden = true;
     $('scan-file').value = '';
     $('scan-msg').textContent = '';
+    if (live) live.steady.reset();
+    renderScan();
+    $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true });
+  }
+
+  // ---------- live camera ----------
+  async function startLive() {
+    if (!scan || live || !preferLive || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    const mine = ++liveSeq;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+    } catch (err) {
+      if (mine !== liveSeq || !scan) return;
+      preferLive = false;
+      $('scan-msg').textContent = err && err.name === 'NotAllowedError'
+        ? 'Camera access was not allowed, so take a photo of each face instead.'
+        : 'The live camera is not available here, so take a photo of each face instead.';
+      renderScan();
+      return;
+    }
+    if (mine !== liveSeq || !scan || !preferLive) { stream.getTracks().forEach(t => t.stop()); return; }
+    const video = $('scan-video');
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) { /* muted inline video normally plays; frames are read anyway */ }
+    if (mine !== liveSeq) { stream.getTracks().forEach(t => t.stop()); return; }
+    live = { stream, steady: ScanLib.createSteadiness(), work: document.createElement('canvas'), timer: setInterval(liveTick, 150) };
+    renderScan();
+    if (!shot) $('scan-capture').focus({ preventScroll: true });
+  }
+  function stopLive() {
+    liveSeq++;
+    if (!live) return;
+    clearInterval(live.timer);
+    live.stream.getTracks().forEach(t => t.stop());
+    $('scan-video').srcObject = null;
+    live = null;
+  }
+  function liveFrame() {
+    const video = $('scan-video');
+    if (!live || video.readyState < 2 || !video.videoWidth) return null;
+    const s = Math.min(1, 480 / Math.max(video.videoWidth, video.videoHeight));
+    const w = Math.round(video.videoWidth * s), h = Math.round(video.videoHeight * s), c = live.work;
+    if (c.width !== w) c.width = w;
+    if (c.height !== h) c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(video, 0, 0, w, h);
+    return ctx.getImageData(0, 0, w, h);
+  }
+  function setCamStatus(text) {
+    if ($('scan-cam-status').textContent !== text) $('scan-cam-status').textContent = text;
+  }
+  function liveTick() {
+    if (!live || shot || !scan) return;
+    const step = scan.step(), img = step && liveFrame();
+    if (!img) return;
+    const found = Vis.findFace(img);
+    const samples = found.method === 'grid' ? Vis.sampleFace(img, found.corners) : null;
+    const problem = samples ? scan.checkCenter(step.face, samples) : null;
+    drawLiveOverlay(img, found, !!samples && !problem);
+    const wanted = NAMES[M.centerColor(M.SOLVED, step.face)];
+    setCamStatus(!samples ? `Show the ${wanted} face, flat to the camera and filling most of the view.`
+      : problem ? problem.replace(/^Photo \d+'s center/, 'The center') : 'Hold still…');
+    const ready = live.steady.push(found, !!samples && !problem);
+    $('scan-steady-bar').style.width = `${live.steady.progress() * 100}%`;
+    if (ready) captureLive(img, found);
+  }
+  function drawLiveOverlay(img, found, good) {
+    const o = $('scan-overlay');
+    if (o.width !== img.width) o.width = img.width;
+    if (o.height !== img.height) o.height = img.height;
+    const ctx = o.getContext('2d');
+    ctx.clearRect(0, 0, o.width, o.height);
+    if (found.method !== 'grid') return;
+    const H = Vis.homography(found.corners);
+    const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...H(...a)); ctx.lineTo(...H(...b)); ctx.stroke(); };
+    ctx.strokeStyle = good ? '#22c55e' : '#f59e0b';
+    ctx.lineWidth = 3;
+    for (let t = 0; t <= 3; t++) { line([t / 3, 0], [t / 3, 1]); line([0, t / 3], [1, t / 3]); }
+  }
+  // Capture the current frame (auto when steady, or the Capture button) and review it like a photo.
+  function captureLive(img, found) {
+    if (!live || shot || !scan) return;
+    live.steady.reset();
+    $('scan-steady-bar').style.width = '0%';
+    img = img || liveFrame();
+    if (!img) return;
+    showShot(img, found || Vis.findFace(img), Vis.quality(img));
+    $('scan-ok').focus({ preventScroll: true });
+  }
+  function usePhotoInstead() {
+    preferLive = false;
+    stopLive();
     renderScan();
     $('scan-take').focus({ preventScroll: true });
   }
@@ -841,6 +953,12 @@
       if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); retakeFace(f.dataset.face); }
     });
     $('scan-cancel').addEventListener('click', cancelScan);
+    $('scan-capture').addEventListener('click', () => captureLive(null, null));
+    $('scan-use-photo').addEventListener('click', usePhotoInstead);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopLive();
+      else if (scan && visible('cube')) startLive();
+    });
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
       app.method = r.value;
       renderSolveButton();
