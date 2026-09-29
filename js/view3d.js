@@ -108,8 +108,12 @@
       stickers.forEach((m, i) => m.material.color.setHex(HEX[state[i]] ?? HEX.x));
       render();
     };
+    // Ends a running turn at once (its promise resolves), so another caller can take over the view.
+    let active = null;
+    this.finishAnimation = () => { if (active) active(); };
     this.animateMove = (move, ms) => new Promise(resolve => {
       if (!ms) { resolve(); return; }
+      this.finishAnimation(); // two turns at once would tangle the cubies
       const g = M.moveGeometry(move);
       const pivot = new T.Object3D();
       group.add(pivot);
@@ -121,6 +125,7 @@
       const finish = () => {
         if (done) return;
         done = true;
+        if (active === finish) active = null;
         clearTimeout(fallback);
         moving.forEach(c => {
           group.attach(c);
@@ -142,6 +147,7 @@
       // Browsers stop animation frames for hidden or covered windows; finish on time anyway
       // so playback never stalls.
       fallback = setTimeout(finish, ms + 250);
+      active = finish;
       requestAnimationFrame(frame);
     });
   }

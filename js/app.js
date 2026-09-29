@@ -38,7 +38,7 @@
     play: { kind: 'solve', method: 'fast', name: '', picture: null, relabeled: false, custom: false },
     sel: null,          // selected pattern { index?, name, moves, state, custom, aliasText }
   };
-  let netCells = [], miniCells = [], editorCells = [], solveCells = [], scanCells = [], player = null;
+  let netCells = [], miniCells = [], editorCells = [], solveCells = [], player = null;
   let galleryBuilt = false, customTimer = null;
   const routes = S.createRouteRequester({
     getStatus: () => Fast.getStatus(),
@@ -60,6 +60,7 @@
     Object.entries(PANELS).forEach(([key, id]) => { $(id).hidden = key !== name; });
     document.body.classList.toggle('is-playing', name === 'play');
     document.body.classList.toggle('is-patterns', name === 'patterns');
+    document.body.classList.toggle('is-scanning', name === 'cube' && !!scan);
     if (focus) {
       const target = name === 'play' ? $('card') : document.querySelector(`#${PANELS[name]} h2`);
       if (target) target.focus({ preventScroll: true });
@@ -85,7 +86,7 @@
       return;
     }
     cancelCustomInput();
-    if (mode !== 'cube') stopLive(); // camera off whenever My Cube is not on screen
+    if (mode !== 'cube') { stopLive(); stopGuide(); } // camera and guide off whenever My Cube is not on screen
     player.afterTurn(() => {
       app.mode = mode;
       renderModeSwitch();
@@ -97,7 +98,7 @@
   function enterCube() {
     showPanel('cube', true);
     renderCube();
-    if (scan) startLive();
+    if (scan) { showGuide(false); startLive(); }
   }
   function enterSolve() {
     showPanel('solve', true);
@@ -202,7 +203,7 @@
     paintNet(netCells, app.cube, app.bad, app.check);
     renderFace();
     renderHold(app.cube);
-    if (app.view && visible('cube')) app.view.setState(app.cube);
+    if (app.view && visible('cube') && !scan) app.view.setState(app.cube); // while scanning, the view is the guide
     const status = $('cube-status');
     status.classList.toggle('ok', app.confirmed);
     status.textContent = app.confirmed
@@ -279,30 +280,48 @@
   }
 
   // ---------- scanning ----------
-  // One capture per face. Where the page may use the camera (GitHub Pages, localhost) a live view
-  // finds the face as you hold it up and captures once it is steady; elsewhere (the claude.ai link)
-  // the phone's camera app is opened through a file input to take a photo.
-  let scan = null, shot = null, photoSeq = 0, cancelArmed = null;
-  let live = null, liveSeq = 0, preferLive = true;
+  // Six faces, in any order and any way up; each is known by its center color and the app works out
+  // at the end which way round each one was. Where the page may use the camera (GitHub Pages,
+  // localhost) a live view finds the face as you hold it up and captures once it is steady;
+  // elsewhere (the claude.ai link) the phone's camera app is opened through a file input.
+  // The 3D view becomes a guide: the cube as the app expects it held, turning to the next face.
+  const SCAN_ORDER = ['F', 'R', 'B', 'L', 'U', 'D']; // the chips, in the order the guide suggests
+  const GUIDE_MS = 1100;
+  const faceName = f => NAMES[M.centerColor(M.SOLVED, f)];
+  const capName = f => { const n = faceName(f); return n.charAt(0).toUpperCase() + n.slice(1); };
+  let scan = null, shot = null, photoSeq = 0, cancelArmed = null, phase = 'capture', fix = null;
+  let live = null, liveSeq = 0, preferLive = true, guideSeq = 0, guideChain = Promise.resolve(), announced = '';
+  const wantsCamera = () => !!scan && (phase === 'capture' || phase === 'review');
   function startScan() {
     scan = ScanLib.createScan();
     shot = null;
+    fix = null;
+    phase = 'capture';
     photoSeq++;
+    announced = '';
     disarmCancel();
     $('btn-scan').hidden = true;
     $('paint-area').hidden = true;
     $('confirm-section').hidden = true;
     $('scan-area').hidden = false;
     $('scan-msg').textContent = '';
+    document.body.classList.add('is-scanning');
     preferLive = true;
+    if (app.view) app.view.resetView();
     renderScan();
+    showGuide(false);
     startLive(); // shows the camera view straight away when a camera may be used
     $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true });
+    // After the guide cube has shrunk (its canvas resizes a frame later), bring the scan into view.
+    if (narrow()) setTimeout(() => { if (scan) $('scan-area').scrollIntoView({ block: 'start', behavior: scrollBehavior() }); }, 200);
   }
   function endScan() {
     stopLive();
+    stopGuide();
     scan = null;
     shot = null;
+    fix = null;
+    phase = 'capture';
     photoSeq++;
     disarmCancel();
     $('scan-file').value = '';
@@ -310,28 +329,112 @@
     $('paint-area').hidden = false;
     $('confirm-section').hidden = false;
     $('btn-scan').hidden = false;
+    document.body.classList.remove('is-scanning');
+    if (app.view && visible('cube')) app.view.setState(app.cube);
   }
   function renderScan() {
     if (!scan) return;
-    const step = scan.step();
-    if (!step) { finishScan(); return; }
-    const stepText = `Photo ${step.index + 1} of ${step.total} · ${FACE_WORD[step.face]} face`;
-    if ($('scan-step').textContent !== stepText) $('scan-live').textContent = `${stepText}. ${step.instruction}`;
-    $('scan-step').textContent = stepText;
-    const camOn = !!live && !shot;
-    $('scan-hold').textContent = `${step.instruction} ${camOn ? 'Hold that face flat to the camera so it fills most of the view.' : 'Fill most of the photo with that face.'}`;
+    const g = scan.guide(), camOn = !!live && phase === 'capture' && !shot;
+    // The face this is all about: the capture under review, else the face to show next.
+    const face = shot ? shot.face : g.target;
+    const head = $('scan-step');
+    head.textContent = '';
+    if (face && (phase === 'capture' || phase === 'review')) {
+      const dot = document.createElement('span');
+      dot.className = 'big-dot';
+      dot.style.setProperty('--c', `var(--c-${M.centerColor(M.SOLVED, face)})`);
+      head.append(dot, shot ? `This is the ${faceName(face)} face` : `Scanning: ${faceName(face)} face`);
+    } else {
+      head.textContent = phase === 'checking' ? 'Checking your cube…' : phase === 'fix' ? 'One face needs another look' : 'All six faces scanned';
+    }
+    const n = scan.count();
+    $('scan-progress').textContent = phase === 'checking' || phase === 'fix' ? '6 of 6 faces'
+      : face && scan.faces[face] ? `Scanning again · ${n} of 6 done` : `Face ${Math.min(6, n + 1)} of 6`;
+    const hint = shot ? 'Check the grid sits on the stickers and the colors below look right. Wrong face? Tap its color.'
+      : phase === 'capture' && g.target ? `${g.hint}${camOn ? '' : ' Fill most of the photo with that face.'}` : '';
+    $('scan-hold').textContent = hint;
+    $('scan-hold').hidden = !hint;
+    $('scan-replay').hidden = !(phase === 'capture' && !shot && g.move && app.view);
+    const say = phase === 'capture' && !shot && g.target ? `Scanning the ${faceName(g.target)} face. ${g.hint}` : '';
+    if (say && say !== announced) { announced = say; $('scan-live').textContent = say; }
+    renderChips(face);
+    $('scan-faces-tip').textContent = shot ? 'Wrong face? Tap the color of the face in this photo.' : 'Tap a color to scan that face, or to scan it again.';
+    $('scan-faces-tip').hidden = phase === 'checking';
     $('scan-cam-box').hidden = !camOn;
     // iOS Safari may pause a video while its box is hidden (during review); resume it on return.
     if (camOn && live.stream && $('scan-video').paused) $('scan-video').play().catch(() => {});
-    $('scan-take').hidden = !!shot || camOn;
+    $('scan-take').hidden = !!shot || camOn || phase !== 'capture';
+    if (g.target) $('scan-take').textContent = `Take a photo of the ${faceName(g.target)} face`;
     $('scan-photo').hidden = !shot;
     $('scan-read').hidden = !shot;
     $('scan-actions').hidden = !shot;
-    scanCells.forEach((el, i) => {
-      const s = scan.faces[M.FACES[Math.floor(i / 9)]];
-      el.style.setProperty('--c', s ? `rgb(${s[i % 9].rgb.map(Math.round).join(',')})` : 'var(--c-x)');
+    $('scan-fix').hidden = phase !== 'fix';
+  }
+  function renderChips(current) {
+    const box = $('scan-faces');
+    if (!box.children.length) {
+      SCAN_ORDER.forEach(f => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'scan-face';
+        b.dataset.face = f;
+        b.style.setProperty('--c', `var(--c-${M.centerColor(M.SOLVED, f)})`);
+        box.appendChild(b);
+      });
+    }
+    box.querySelectorAll('.scan-face').forEach(b => {
+      const f = b.dataset.face, done = !!scan.faces[f];
+      b.classList.toggle('done', done);
+      b.setAttribute('aria-pressed', String(f === current));
+      b.disabled = phase === 'checking';
+      b.setAttribute('aria-label', `${capName(f)} face, ${done ? 'scanned' : 'not scanned yet'}`);
+      b.title = `${capName(f)} face${done ? ' ✓' : ''}`;
     });
   }
+  // Tapping a color: during review it says which face the photo shows; otherwise scan that face next.
+  function tapChip(face) {
+    if (!scan || phase === 'checking') return;
+    if (shot) {
+      shot.face = face;
+      shot.labeled = true;
+      shot.replace = false;
+      $('scan-ok').textContent = 'Looks right';
+      renderScan();
+      return;
+    }
+    scan.pick(face);
+    const wasFix = phase === 'fix';
+    phase = 'capture';
+    $('scan-msg').textContent = '';
+    if (live) live.steady.reset();
+    renderScan();
+    showGuide(true);
+    if (wasFix) startLive();
+  }
+
+  // ---------- the guide cube ----------
+  // One animation at a time (two turns at once would tangle the cubies); a newer request, the end of
+  // the scan or leaving My Cube makes older ones stop.
+  function showGuide(animate) {
+    const mine = ++guideSeq;
+    guideChain = guideChain.then(async () => {
+      if (mine !== guideSeq || !scan || !app.view || !visible('cube')) return;
+      const g = scan.guide(), state = scan.guideState();
+      const before = M.applyMoves(state, g.hold), after = g.move ? M.applyMoves(before, g.move) : before;
+      app.view.setState(before);
+      if (animate && g.move) {
+        await app.view.animateMove(g.move, GUIDE_MS);
+        if (mine !== guideSeq || !scan || !visible('cube')) return;
+      }
+      app.view.setState(after);
+    }).catch(() => {});
+  }
+  function stopGuide() {
+    guideSeq++;
+    if (app.view) app.view.finishAnimation();
+  }
+
+  // ---------- photos ----------
   function loadImage(file) {
     // Portrait phone photos carry their rotation in EXIF; ask for it to be applied.
     if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => loadImageElement(file));
@@ -347,7 +450,7 @@
     });
   }
   async function onPhoto(file) {
-    if (!file || !scan) return;
+    if (!file || !scan || phase !== 'capture') return;
     const mine = ++photoSeq; // a newer pick, retake or cancel makes this one stale
     let source;
     try {
@@ -356,7 +459,7 @@
       if (mine === photoSeq) $('scan-msg').textContent = err.message;
       return;
     }
-    if (mine !== photoSeq || !scan) { if (source.close) source.close(); return; }
+    if (mine !== photoSeq || !scan || phase !== 'capture') { if (source.close) source.close(); return; }
     const canvas = $('scan-canvas'), s = Math.min(1, 480 / Math.max(source.width, source.height));
     canvas.width = Math.round(source.width * s);
     canvas.height = Math.round(source.height * s);
@@ -364,15 +467,19 @@
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
     if (source.close) source.close(); // a full-size photo bitmap is tens of MB
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    showShot(img, Vis.findFace(img), Vis.quality(img));
+    showShot(img, Vis.findFace(img), Vis.quality(img), null, false);
   }
   // Show a captured face (from a photo or the live camera) for review: grid, corners, read colors.
-  function showShot(img, found, q) {
+  // face: the face it was captured as (null: the one being scanned); labeled: the user said so
+  // (Capture pressed), otherwise the center color decides and may change as corners move.
+  function showShot(img, found, q, face, labeled) {
     const canvas = $('scan-canvas');
     canvas.width = img.width;
     canvas.height = img.height;
-    shot = { img, corners: found.corners };
-    $('scan-anyway').hidden = true;
+    $('scan-photo').style.setProperty('--ar', (img.width / img.height).toFixed(3)); // keeps a portrait photo on screen
+    shot = { img, corners: found.corners, face: face || scan.target(), labeled: !!labeled, replace: false };
+    phase = 'review';
+    $('scan-ok').textContent = 'Looks right';
     const msgs = [];
     if (found.method === 'none') msgs.push("Couldn't find the face. Drag the 4 corners onto the face's corners.");
     else if (found.method === 'body') msgs.push('Check that the grid lines up with the stickers, and drag the corners if not.');
@@ -399,6 +506,11 @@
   }
   function resample() {
     shot.samples = Vis.sampleFace(shot.img, shot.corners);
+    // Unless the user said which face this is, go by the center (moving a corner can change it).
+    if (!shot.labeled) {
+      const seenFace = ScanLib.faceForCenter(shot.samples);
+      if (seenFace && seenFace !== shot.face) { shot.face = seenFace; shot.replace = false; $('scan-ok').textContent = 'Looks right'; }
+    }
     drawShot();
     const read = $('scan-read');
     read.textContent = '';
@@ -407,6 +519,7 @@
       cell.style.setProperty('--c', `rgb(${s.rgb.map(Math.round).join(',')})`);
       read.appendChild(cell);
     });
+    if (scan) renderScan();
   }
   const CORNER_NAMES = ['top-left', 'top-right', 'bottom-right', 'bottom-left'];
   function buildHandles() {
@@ -452,12 +565,12 @@
       box.appendChild(h);
     });
   }
-  // Cancelling throws the photos away, so with any taken it asks for a second tap.
+  // Cancelling throws the captured faces away, so with any taken it asks for a second tap.
   function cancelScan() {
     if (!scan) return;
-    const taken = Object.keys(scan.faces).length + (shot ? 1 : 0);
+    const taken = scan.count() + (shot ? 1 : 0);
     if (taken && !cancelArmed) {
-      $('scan-cancel').textContent = `Discard ${taken} photo${taken === 1 ? '' : 's'}?`;
+      $('scan-cancel').textContent = `Discard ${taken} face${taken === 1 ? '' : 's'}?`;
       cancelArmed = setTimeout(disarmCancel, 5000);
       return;
     }
@@ -469,15 +582,99 @@
     cancelArmed = null;
     $('scan-cancel').textContent = 'Cancel scan';
   }
-  function retakePhoto() {
+  function clearShot() {
     shot = null;
     photoSeq++;
-    $('scan-anyway').hidden = true;
     $('scan-file').value = '';
     $('scan-msg').textContent = '';
+    $('scan-ok').textContent = 'Looks right';
     if (live) live.steady.reset();
+  }
+  function retakePhoto() {
+    clearShot();
+    phase = 'capture';
     renderScan();
     $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true });
+  }
+  function acceptPhoto() {
+    if (!scan || !shot) return;
+    const f = shot.face;
+    // A face scanned before, and not the one picked to scan again: make sure it should be replaced.
+    if (scan.faces[f] && scan.target() !== f && !shot.replace) {
+      shot.replace = true;
+      $('scan-msg').textContent = `You already scanned the ${faceName(f)} face. Replace it with this one, or tap the color of the face in this photo.`;
+      $('scan-ok').textContent = `Replace ${faceName(f)}`;
+      return;
+    }
+    scan.setFace(f, shot.samples);
+    clearShot();
+    $('scan-live').textContent = `${capName(f)} face saved. ${scan.count()} of 6 done.`;
+    announced = '';
+    if (scan.done()) { checkScan(); return; }
+    phase = 'capture';
+    renderScan();
+    showGuide(true);
+    $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true });
+  }
+
+  // ---------- checking the six faces ----------
+  async function checkScan() {
+    phase = 'checking';
+    stopLive();
+    renderScan();
+    $('scan-live').textContent = 'Checking your cube…';
+    const mine = scan;
+    const r = await later(() => mine.check()); // lets "Checking…" paint first
+    if (scan !== mine) return; // cancelled meanwhile
+    if (r.ok) finishScan(r);
+    else showFix(r);
+  }
+  function finishScan(r) {
+    endScan();
+    const check = [...new Set(r.uncertain.concat(r.ambiguousCells))];
+    const parts = ['Scanned.'];
+    if (r.ambiguous.length) {
+      const list = r.ambiguous.map(faceName);
+      const names = list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}` : list[0];
+      parts.push(`I couldn't be sure which way round the ${names} face${list.length > 1 ? 's were' : ' was'} held.`);
+    }
+    if (check.length) parts.push(`${check.length} sticker${check.length === 1 ? '' : 's'} to check ${check.length === 1 ? 'is' : 'are'} outlined with dashes.`);
+    parts.push('Check it against your cube, then press "This is my cube".');
+    setCube(r.state, parts.join(' '));
+    app.check = new Set(check);
+    renderCube();
+    document.querySelector('#cube-panel h2').focus({ preventScroll: true });
+  }
+  function showFix(r) {
+    fix = r;
+    phase = 'fix';
+    const names = r.suspects.map(faceName);
+    $('scan-fix-msg').textContent = 'These six faces don’t make a real cube, so a sticker was probably misread. ' +
+      (names.length ? `Most likely on the ${names.join(' or ')} face: scan it again, or tap any color below.` : 'Tap a color below to scan that face again, or fix it by painting.');
+    const box = $('scan-fix-faces');
+    box.textContent = '';
+    r.suspects.forEach(f => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn primary';
+      b.textContent = `Scan ${faceName(f)} again`;
+      b.addEventListener('click', () => tapChip(f));
+      box.appendChild(b);
+    });
+    renderScan();
+    $('scan-live').textContent = $('scan-fix-msg').textContent;
+    (box.querySelector('button') || $('scan-paint')).focus({ preventScroll: true });
+  }
+  function paintInstead() {
+    const r = fix;
+    if (!r) return;
+    endScan();
+    setCube(r.state, 'Scanned, but some stickers don’t fit together. Fix the ones outlined in red by painting, then press "This is my cube".');
+    app.bad = new Set(r.errors.flatMap(e => e.cells));
+    app.check = new Set(r.uncertain);
+    renderErrors(r.errors);
+    renderCube();
+    document.querySelector('#cube-panel h2').focus({ preventScroll: true });
   }
 
   // ---------- live camera ----------
@@ -490,7 +687,7 @@
   // `live` exists from the moment the camera is asked for (stream null until it arrives), so the
   // view shows "Starting the camera…" and stopLive can always stop what it started.
   async function startLive() {
-    if (!scan || live || !preferLive || !cameraAllowed()) return;
+    if (!wantsCamera() || live || !preferLive || !cameraAllowed()) return;
     const mine = ++liveSeq;
     live = { stream: null, steady: ScanLib.createSteadiness(), work: document.createElement('canvas'), timer: null };
     resetLiveView('Starting the camera…');
@@ -552,20 +749,27 @@
     if ($('scan-cam-status').textContent !== text) $('scan-cam-status').textContent = text;
   }
   function liveTick() {
-    if (!live || shot || !scan) return;
-    const step = scan.step(), img = step && liveFrame();
+    if (!live || shot || !scan || phase !== 'capture') return;
+    const img = liveFrame();
     if (!img) return;
     const found = Vis.findFace(img);
     const samples = found.method === 'grid' ? Vis.sampleFace(img, found.corners) : null;
-    const problem = samples ? scan.checkCenter(step.face, samples, { live: true }) : null;
-    drawLiveOverlay(img, found, !!samples && !problem);
-    const wanted = NAMES[M.centerColor(M.SOLVED, step.face)];
-    setCamStatus(!samples ? `Show the ${wanted} face, flat to the camera and filling most of the view.` : problem || 'Hold still…');
-    const ready = live.steady.push(found, !!samples && !problem);
+    const seen = scan.seen(samples ? ScanLib.faceForCenter(samples) : null);
+    // Showing a face not scanned yet makes it the one being scanned.
+    if (seen.capture && seen.face !== scan.target()) {
+      scan.pick(seen.face);
+      renderScan();
+      showGuide(false);
+    }
+    drawLiveOverlay(img, found, seen.capture ? seen.face : null);
+    setCamStatus(seen.message);
+    const ready = live.steady.push(found, seen.capture ? seen.face : null);
     $('scan-steady-bar').style.width = `${live.steady.progress() * 100}%`;
-    if (ready) captureLive(img, found);
+    if (ready) captureLive(img, found, seen.face, false);
   }
-  function drawLiveOverlay(img, found, good) {
+  // The grid over the video, in the color of the face it will be captured as (grey: can't capture).
+  const GRID_COLOR = { w: '#f4f4ef', y: '#ffd200', g: '#00c85a', b: '#3d7bff', r: '#ff3040', o: '#ff7a1f' };
+  function drawLiveOverlay(img, found, face) {
     const o = $('scan-overlay');
     if (o.width !== img.width) o.width = img.width;
     if (o.height !== img.height) o.height = img.height;
@@ -574,18 +778,21 @@
     if (found.method !== 'grid') return;
     const H = Vis.homography(found.corners);
     const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...H(...a)); ctx.lineTo(...H(...b)); ctx.stroke(); };
-    ctx.strokeStyle = good ? '#22c55e' : '#f59e0b';
-    ctx.lineWidth = 3;
-    for (let t = 0; t <= 3; t++) { line([t / 3, 0], [t / 3, 1]); line([0, t / 3], [1, t / 3]); }
+    [['rgba(0,0,0,.65)', 6], [face ? GRID_COLOR[M.centerColor(M.SOLVED, face)] : '#9aa3b0', 3]].forEach(([color, width]) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      for (let t = 0; t <= 3; t++) { line([t / 3, 0], [t / 3, 1]); line([0, t / 3], [1, t / 3]); }
+    });
   }
-  // Capture the current frame (auto when steady, or the Capture button) and review it like a photo.
-  function captureLive(img, found) {
-    if (!live || !live.stream || shot || !scan) return;
+  // Capture the current frame (auto when steady, or the Capture button as the face being scanned)
+  // and review it like a photo.
+  function captureLive(img, found, face, labeled) {
+    if (!live || !live.stream || shot || !scan || phase !== 'capture') return;
     live.steady.reset();
     $('scan-steady-bar').style.width = '0%';
     img = img || liveFrame();
     if (!img) return;
-    showShot(img, found || Vis.findFace(img), Vis.quality(img));
+    showShot(img, found || Vis.findFace(img), Vis.quality(img), face || scan.target(), labeled);
     $('scan-ok').focus({ preventScroll: true });
   }
   function usePhotoInstead() {
@@ -593,35 +800,6 @@
     stopLive();
     renderScan();
     $('scan-take').focus({ preventScroll: true });
-  }
-  function acceptPhoto(anyway) {
-    const step = scan.step();
-    if (!step || !shot) return;
-    const problem = anyway ? null : scan.checkCenter(step.face, shot.samples);
-    if (problem) {
-      $('scan-msg').textContent = `${problem} Retake it, or use it anyway if the colors below are right.`;
-      $('scan-anyway').hidden = false;
-      return;
-    }
-    scan.setFace(step.face, shot.samples);
-    retakePhoto();
-  }
-  function retakeFace(face) {
-    if (!scan || !scan.faces[face]) return;
-    scan.redo(face);
-    retakePhoto();
-    $('scan-msg').textContent = `Retaking the ${FACE_WORD[face].toLowerCase()} face.`;
-  }
-  function finishScan() {
-    const { state, uncertain } = scan.result();
-    endScan();
-    const n = uncertain.length;
-    setCube(state, n
-      ? `Scanned. ${n} sticker${n === 1 ? '' : 's'} I wasn't sure about ${n === 1 ? 'is' : 'are'} outlined with dashes: check ${n === 1 ? 'it' : 'them'} against your cube, then press "This is my cube".`
-      : 'Scanned. Check it against your cube, then press "This is my cube".');
-    app.check = new Set(uncertain);
-    renderCube();
-    document.querySelector('#cube-panel h2').focus({ preventScroll: true });
   }
 
   // ---------- Solve ----------
@@ -969,19 +1147,16 @@
     $('scan-take').addEventListener('click', () => $('scan-file').click());
     $('scan-file').addEventListener('change', e => onPhoto(e.target.files && e.target.files[0]));
     $('scan-retake').addEventListener('click', retakePhoto);
-    $('scan-ok').addEventListener('click', () => acceptPhoto(false));
-    $('scan-anyway').addEventListener('click', () => acceptPhoto(true));
-    $('scan-net').addEventListener('click', e => { const f = e.target.closest('.face'); if (f) retakeFace(f.dataset.face); });
-    $('scan-net').addEventListener('keydown', e => {
-      const f = e.target.closest('.face');
-      if (f && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); retakeFace(f.dataset.face); }
-    });
+    $('scan-ok').addEventListener('click', acceptPhoto);
+    $('scan-faces').addEventListener('click', e => { const b = e.target.closest('.scan-face'); if (b) tapChip(b.dataset.face); });
+    $('scan-replay').addEventListener('click', () => showGuide(true));
+    $('scan-paint').addEventListener('click', paintInstead);
     $('scan-cancel').addEventListener('click', cancelScan);
-    $('scan-capture').addEventListener('click', () => captureLive(null, null));
+    $('scan-capture').addEventListener('click', () => captureLive(null, null, null, true));
     $('scan-use-photo').addEventListener('click', usePhotoInstead);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) stopLive();
-      else if (scan && visible('cube')) startLive();
+      else if (wantsCamera() && visible('cube')) startLive();
     });
     document.querySelectorAll('input[name="method"]').forEach(r => r.addEventListener('change', () => {
       app.method = r.value;
@@ -1031,12 +1206,6 @@
     netCells = buildNet($('net'), true);
     miniCells = buildNet($('mini-net'), false);
     solveCells = buildNet($('solve-net'), false);
-    scanCells = buildNet($('scan-net'), false);
-    $('scan-net').querySelectorAll('.face').forEach(f => {
-      f.tabIndex = 0;
-      f.setAttribute('role', 'button');
-      f.setAttribute('aria-label', `Retake the ${FACE_WORD[f.dataset.face].toLowerCase()} face photo`);
-    });
     buildEditor();
     initView();
     player = P.createPlayer({

@@ -106,21 +106,38 @@
   .scan { display: grid; gap: 12px; }
   #scan-take { justify-self: start; }
   /* Only the corner handles block scrolling; clip them at the sides so they never widen the page. */
-  .scan-photo { position: relative; justify-self: start; width: 100%; max-width: 480px; overflow-x: clip; }
-  #scan-net .face { cursor: pointer; }
+  .scan-photo { position: relative; justify-self: start; width: min(100%, 480px, calc(50vh * var(--ar, 1))); overflow-x: clip; }
+  /* The face being scanned: always named in the headline, with its color. */
+  .scan-now { display: flex; align-items: center; gap: 10px; margin: 0; font: 700 24px/1.1 var(--font-display); letter-spacing: .02em; text-transform: uppercase; }
+  .scan-now .big-dot { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px var(--plastic); }
+  .scan-guide { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .scan-guide .hint { margin: 0; flex: 1 1 240px; }
+  .scan-faces { display: flex; flex-wrap: wrap; gap: 8px; }
+  .scan-face { position: relative; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 0; background: var(--c);
+    box-shadow: 0 0 0 2px var(--plastic); cursor: pointer; }
+  .scan-face[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--plastic), 0 0 0 5px var(--accent); }
+  .scan-face.done::after { content: '✓'; position: absolute; right: -4px; bottom: -4px; width: 20px; height: 20px; border-radius: 50%;
+    display: grid; place-items: center; font: 700 13px/1 var(--font-body); color: #fff; background: #16803c; box-shadow: 0 0 0 2px var(--surface); }
+  .scan-fix { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: 12px; background: var(--surface); }
+  .scan-fix p { margin: 0; }
+  .is-scanning #hold { visibility: hidden; }
   .scan-cam-box { display: grid; gap: 8px; }
   /* --ar (the video's width/height, set from app.js) keeps a portrait phone video under half the screen height. */
   .scan-cam { position: relative; width: min(100%, 480px, calc(50vh * var(--ar, 1))); overflow: hidden; border-radius: 10px; background: #000; }
   .scan-cam video { display: block; width: 100%; height: auto; }
   .scan-cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-  .scan-steady { width: 100%; max-width: 480px; height: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); }
+  /* What the camera sees, and how steady it is, sit over the video so the view stays compact. */
+  .cam-status { position: absolute; left: 0; right: 0; top: 0; margin: 0; padding: 6px 10px; color: #fff; font-size: 14px; background: rgba(0,0,0,.6); }
+  .cam-status:empty { display: none; }
+  .scan-steady { position: absolute; left: 10px; right: 10px; bottom: 10px; height: 6px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.35); }
   .scan-steady > div { width: 0; height: 100%; background: #22c55e; }
   .scan-photo canvas { display: block; width: 100%; height: auto; border-radius: 10px; }
   .scan-handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid #fff; border-radius: 50%;
     background: rgba(29, 78, 216, .35); box-shadow: 0 0 0 2px rgba(0,0,0,.5); cursor: grab; touch-action: none; }
+  .scan-review { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+  .scan-review:not(:has(:not([hidden]))) { display: none; }
   .scan-read { display: grid; grid-template-columns: repeat(3, 28px); gap: 3px; padding: 3px; border-radius: 6px; background: var(--plastic); justify-self: start; }
   .scan-read span { width: 28px; height: 28px; border-radius: 4px; background: var(--c); }
-  #scan-net .st { background: var(--c, var(--c-x)); }
   .st.check { outline: 3px dashed var(--danger); outline-offset: 1px; }
   .hint b { font-weight: 600; }
 
@@ -219,6 +236,13 @@
     .is-patterns #view { max-height: 28vh; }
     .is-patterns .view-note { display: none; }
     .is-patterns .pdetail { scroll-margin-top: calc(28vh + 24px); }
+    /* Scanning on phones: the guide cube stays on top, small enough to leave room for the camera. */
+    .is-scanning .viewer { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
+    .is-scanning #view { max-height: 22vh; }
+    .is-scanning .view-note { display: none; }
+    .is-scanning .scan { gap: 8px; }
+    .is-scanning .scan-cam, .is-scanning .scan-photo { width: min(100%, 480px, calc(34vh * var(--ar, 1))); }
+    .is-scanning #scan-area { scroll-margin-top: calc(22vh + 20px); }
   }
   @media (max-width: 440px) {
     .methods { grid-template-columns: 1fr; }
@@ -264,15 +288,19 @@
         <p class="tip">Make this cube match the one in your hands: scan it with your camera, or paint it. Tap a face name to see how to hold the cube while you read that face.</p>
         <button class="btn primary" id="btn-scan" type="button">Scan my cube</button>
         <div class="scan" id="scan-area" hidden>
-          <div class="prow"><strong class="plabel" id="scan-step"></strong><button class="btn" id="scan-cancel" type="button">Cancel scan</button></div>
-          <p class="hint" id="scan-hold"></p>
+          <div class="prow"><strong class="plabel" id="scan-progress"></strong><button class="btn" id="scan-cancel" type="button">Cancel scan</button></div>
+          <h3 class="scan-now" id="scan-step"></h3>
+          <div class="scan-guide">
+            <p class="hint" id="scan-hold"></p>
+            <button class="btn" id="scan-replay" type="button" hidden>Show me the turn again</button>
+          </div>
           <p class="sr-only" id="scan-live" aria-live="polite"></p>
           <div class="scan-cam-box" id="scan-cam-box" hidden>
-            <p class="status" id="scan-cam-status"></p>
-            <div class="scan-steady" aria-hidden="true"><div id="scan-steady-bar"></div></div>
             <div class="scan-cam" id="scan-cam">
               <video id="scan-video" playsinline muted autoplay></video>
               <canvas id="scan-overlay" aria-hidden="true"></canvas>
+              <p class="cam-status" id="scan-cam-status"></p>
+              <div class="scan-steady" aria-hidden="true"><div id="scan-steady-bar"></div></div>
             </div>
             <div class="row">
               <button class="btn primary" id="scan-capture" type="button">Capture</button>
@@ -281,18 +309,24 @@
           </div>
           <button class="btn primary" id="scan-take" type="button">Take photo</button>
           <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
-          <div class="scan-photo" id="scan-photo" hidden>
-            <canvas id="scan-canvas"></canvas>
+          <div class="scan-review">
+            <div class="scan-photo" id="scan-photo" hidden>
+              <canvas id="scan-canvas"></canvas>
+            </div>
+            <div class="scan-read" id="scan-read" hidden></div>
           </div>
           <p class="status" id="scan-msg" aria-live="polite"></p>
-          <div class="scan-read" id="scan-read" hidden></div>
           <div class="row" id="scan-actions" hidden>
             <button class="btn" id="scan-retake" type="button">Retake</button>
             <button class="btn primary" id="scan-ok" type="button">Looks right</button>
-            <button class="btn" id="scan-anyway" type="button" hidden>Use it anyway</button>
           </div>
-          <p class="tip">Tap a finished face below to retake its photo.</p>
-          <div class="net mini" id="scan-net"></div>
+          <div class="scan-fix" id="scan-fix" hidden>
+            <p id="scan-fix-msg"></p>
+            <div class="row" id="scan-fix-faces"></div>
+            <button class="btn" id="scan-paint" type="button">Fix by painting</button>
+          </div>
+          <div class="scan-faces" id="scan-faces" role="group" aria-label="The six faces"></div>
+          <p class="tip" id="scan-faces-tip">Tap a color to scan that face, or to scan it again.</p>
         </div>
         <div class="paint" id="paint-area">
         <div class="palette" id="palette" role="group" aria-label="Sticker color"></div>
