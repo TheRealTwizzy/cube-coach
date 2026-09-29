@@ -354,5 +354,17 @@
     return best;
   }
 
-  return { rgbToLab, homographyMatrix, applyH, homography, downscale, findFace, sampleFace, classify, quality, colorLetter, distance };
+  // Six face centers → six different color letters, matched all at once so one color cast (warm
+  // light making white look yellow) can't give two faces the same name: white costs its chroma,
+  // the other colors their hue gap.
+  function nameCenters(labs) {
+    const cost = labs.map(lab => LETTERS.map((l, i) => {
+      if (l === 'w') return Math.hypot(lab[1], lab[2]) / 40;
+      const d = Math.abs(hueOf(lab) - hueOf(CANON_LAB[i]));
+      return Math.min(d, 2 * Math.PI - d);
+    }));
+    return Array.from(hungarian(cost), col => LETTERS[col]);
+  }
+
+  return { rgbToLab, homographyMatrix, applyH, homography, downscale, findFace, sampleFace, classify, quality, colorLetter, nameCenters, distance };
 });

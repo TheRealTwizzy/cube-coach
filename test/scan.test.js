@@ -2,17 +2,39 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const M = require('../js/cube.js');
 const V = require('../js/vision.js');
+const { validate } = require('../js/validate.js');
 const Scan = require('../js/scan.js');
 const { SHADES, light } = require('./imagegen.js');
 const { seededRng } = require('./helpers.js');
 
-// Samples for one face of `state`, as sampleFace would return them under some lighting.
-function samplesOf(state, face, rng) {
-  const fi = M.FACES.indexOf(face), exposure = 0.75 + rng() * 0.35;
-  return [...Array(9).keys()].map(k => {
-    const rgb = light(SHADES[state[fi * 9 + k]], exposure, rng() * 0.08);
+// Samples for 9 sticker letters (one photo), as sampleFace would return them under some lighting.
+function toSamples(letters, rng) {
+  const exposure = 0.75 + rng() * 0.35;
+  return letters.map(c => {
+    const rgb = light(SHADES[c], exposure, rng() * 0.08);
     return { rgb, lab: V.rgbToLab(rgb) };
   });
+}
+const faceOf = (state, f) => state.slice(M.FACES.indexOf(f) * 9, M.FACES.indexOf(f) * 9 + 9);
+const scrambled = (rng, n = 25) => M.applyMoves(M.SOLVED, M.randomScramble(n, rng));
+function shuffle(list, rng) {
+  const a = list.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+// What the camera sees when the cube is held as the guide says for the next face.
+function photoFollowingGuide(s, state) {
+  const g = s.guide();
+  const hold = g.hold.concat(g.move ? [g.move] : []);
+  return { face: g.target, letters: M.applyMoves(state, hold).slice(18, 27) };
+}
+function scanFollowingGuide(state, rng) {
+  const s = Scan.createScan();
+  while (!s.done()) {
+    const p = photoFollowingGuide(s, state);
+    s.setFace(p.face, toSamples(p.letters, rng));
+  }
+  return s;
 }
 
 test('colorLetter names a sample with the nearest standard color', () => {
@@ -20,100 +42,250 @@ test('colorLetter names a sample with the nearest standard color', () => {
   assert.equal(V.colorLetter(V.rgbToLab(SHADES.w)), 'w');
 });
 
-test('photos go front, right, back, left, top, bottom with hold instructions', () => {
-  const s = Scan.createScan();
-  assert.deepEqual(Scan.ORDER, ['F', 'R', 'B', 'L', 'U', 'D']);
-  const first = s.step();
-  assert.equal(first.index, 0);
-  assert.equal(first.face, 'F');
-  assert.equal(first.total, 6);
-  assert.match(first.instruction, /white on top with green facing you/);
-  const rng = seededRng(1);
-  s.setFace('F', samplesOf(M.SOLVED, 'F', rng));
-  assert.equal(s.step().face, 'R');
-  assert.match(s.step().instruction, /red faces you/);
-});
-
-test('redo sends the next step back to that face', () => {
-  const rng = seededRng(2), s = Scan.createScan();
-  ['F', 'R', 'B'].forEach(f => s.setFace(f, samplesOf(M.SOLVED, f, rng)));
-  s.redo('R');
-  assert.equal(s.step().face, 'R');
-  assert.equal(s.done(), false);
-});
-
-test("each photo's center is checked against the face asked for", () => {
-  const rng = seededRng(3), s = Scan.createScan();
-  let wrongCalls = 0;
+test('the center color names the face in view, under very different lighting', () => {
+  const rng = seededRng(3);
+  let wrong = 0;
   for (let n = 0; n < 50; n++) {
-    for (const f of Scan.ORDER) {
-      const fi = M.FACES.indexOf(f), exposure = 0.55 + rng() * 0.7, tint = (rng() * 2 - 1) * 0.15;
-      const samples = [...Array(9).keys()].map(() => {
-        const rgb = light(SHADES[M.SOLVED[fi * 9 + 4]], exposure, tint);
-        return { rgb, lab: V.rgbToLab(rgb) };
-      });
-      if (s.checkCenter(f, samples)) wrongCalls++;
+    for (const f of M.FACES) {
+      const exposure = 0.55 + rng() * 0.7, tint = (rng() * 2 - 1) * 0.15;
+      const rgb = light(SHADES[M.centerColor(M.SOLVED, f)], exposure, tint);
+      const samples = Array.from({ length: 9 }, () => ({ rgb, lab: V.rgbToLab(rgb) }));
+      if (Scan.faceForCenter(samples) !== f) wrong++;
     }
   }
-  assert.equal(wrongCalls, 0, 'correct faces are never rejected');
-  const orange = samplesOf(M.SOLVED, 'L', rng);
-  assert.equal(s.checkCenter('R', orange), "Photo 2's center looks orange, but this step needs the red face.");
-  assert.equal(s.checkCenter('R', orange, { live: true }), 'The center looks orange, but this step needs the red face.');
+  assert.equal(wrong, 0);
 });
 
-test('six photos give back the scrambled cube', () => {
+test('turnFace: four quarter turns are no turn, and one quarter is how the front looks after z', () => {
+  const s = scrambled(seededRng(6), 20), front = s.slice(18, 27);
+  assert.deepEqual(Scan.turnFace(front, 4), front);
+  assert.deepEqual(Scan.turnFace(Scan.turnFace(front, 3), 1), front);
+  assert.deepEqual(Scan.turnFace(front, 1), M.applyMoves(s, 'z').slice(18, 27));
+});
+
+test('turnToFront is one whole-cube turn that brings the face to the camera, from any hold', () => {
+  for (const hold of M.ROTATIONS) {
+    for (const f of M.FACES) {
+      const move = Scan.turnToFront(hold, f);
+      assert.ok(['', 'y', "y'", 'y2', "x'", 'x'].includes(move), move);
+      const after = M.applyMoves(M.SOLVED, hold.concat(move ? [move] : []));
+      assert.equal(M.centerColor(after, 'F'), M.centerColor(M.SOLVED, f), `${hold.join(' ')} → ${f}`);
+    }
+  }
+});
+
+test('faces shown in any order and any way up rebuild the cube', () => {
   const rng = seededRng(4);
-  for (let n = 0; n < 10; n++) {
-    const state = M.applyMoves(M.SOLVED, M.randomScramble(25, rng));
-    const s = Scan.createScan();
-    Scan.ORDER.forEach(f => s.setFace(f, samplesOf(state, f, rng)));
+  for (let n = 0; n < 25; n++) {
+    const state = scrambled(rng), s = Scan.createScan();
+    for (const f of shuffle(M.FACES, rng)) s.setFace(f, toSamples(Scan.turnFace(faceOf(state, f), Math.floor(rng() * 4)), rng));
     assert.equal(s.done(), true);
-    assert.equal(s.step(), null);
-    assert.deepEqual(s.result().state, state);
+    const r = s.check();
+    assert.equal(r.ok, true, `scramble ${n}`);
+    assert.deepEqual(r.state, state, `scramble ${n}`);
   }
 });
 
-test('turning the cube as each instruction says and photographing the front rebuilds the cube', () => {
-  const D = require('../js/describe.js');
-  const rng = seededRng(5);
-  for (let n = 0; n < 10; n++) {
-    const state = M.applyMoves(M.SOLVED, M.randomScramble(25, rng));
-    const s = Scan.createScan();
-    for (const face of Scan.ORDER) {
-      const r = D.READING[face].rotation;
-      const view = r ? M.applyMoves(state, r) : state; // the cube as held for this photo
-      const photo = view.slice(18, 27); // what faces the camera, row by row as seen
-      s.setFace(face, photo.map(c => { const rgb = light(SHADES[c], 0.8 + rng() * 0.3, 0); return { rgb, lab: V.rgbToLab(rgb) }; }));
-    }
-    assert.deepEqual(s.result().state, state, `scramble ${n}`);
+test('orient turns each face and its uncertain stickers together', () => {
+  const state = scrambled(seededRng(7));
+  const photoTurn = { U: 1, R: 2, F: 3, D: 0, L: 1, B: 2 };
+  const photos = [].concat(...M.FACES.map(f => Scan.turnFace(faceOf(state, f), photoTurn[f])));
+  // Photo position p of the right face shows net sticker 0 of that face.
+  const p = Scan.turnFace([...Array(9).keys()], photoTurn.R).indexOf(0);
+  const r = Scan.orient(photos, [9 + p], {});
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.state, state);
+  assert.deepEqual(r.turns, { U: 3, R: 2, F: 1, D: 0, L: 3, B: 2 });
+  assert.deepEqual(r.uncertain, [9]);
+});
+
+test('solved and checkerboard cubes come back as they are, never ambiguous', () => {
+  const rng = seededRng(8);
+  for (const alg of ['', 'M2 E2 S2']) {
+    const state = M.applyMoves(M.SOLVED, alg), s = Scan.createScan();
+    for (const f of shuffle(M.FACES, rng)) s.setFace(f, toSamples(Scan.turnFace(faceOf(state, f), Math.floor(rng() * 4)), rng));
+    const r = s.check();
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.state, state);
+    assert.deepEqual(r.ambiguous, []);
   }
+});
+
+test('following the guide rebuilds nearly solved cubes exactly, with no correction needed', () => {
+  const rng = seededRng(9);
+  const cases = M.FACES.flatMap(f => [f, f + "'", f + '2']).map(m => M.applyMoves(M.SOLVED, m));
+  for (let n = 0; n < 6; n++) cases.push(scrambled(rng));
+  cases.forEach((state, n) => {
+    const s = scanFollowingGuide(state, rng), r = s.check();
+    assert.equal(r.ok, true, `case ${n}`);
+    assert.deepEqual(r.state, state, `case ${n}`);
+    M.FACES.forEach(f => assert.equal(r.turns[f], s.faces[f].expected, `case ${n} face ${f}`));
+    assert.deepEqual(r.ambiguous, [], `case ${n}`);
+  });
+});
+
+test('with no idea how faces were held, a nearly solved cube is flagged as ambiguous', () => {
+  const state = M.applyMoves(M.SOLVED, 'R');
+  const r = Scan.orient(state, [], {});
+  assert.equal(r.ok, true);
+  assert.equal(validate(r.state).ok, true);
+  assert.ok(r.ambiguous.length > 0);
+  assert.ok(r.ambiguousCells.length > 0);
+  r.ambiguousCells.forEach(i => assert.ok(r.ambiguous.includes(M.FACES[Math.floor(i / 9)])));
+  const known = Scan.orient(state, [], { U: 0, R: 0, F: 0, D: 0, L: 0, B: 0 });
+  assert.deepEqual(known.state, state);
+  assert.deepEqual(known.ambiguous, []);
+});
+
+test('a misread pair of stickers: not a real cube, the right faces kept, and the misread face named', () => {
+  const rng = seededRng(10);
+  let named = 0;
+  const N = 20;
+  for (let n = 0; n < N; n++) {
+    const truth = scrambled(rng), bad = truth.slice(), r0 = 9; // right face starts at 9
+    const [a, b] = bad[r0] !== bad[r0 + 1] ? [r0, r0 + 1] : [r0 + 1, r0 + 2]; // a corner and an edge sticker
+    [bad[a], bad[b]] = [bad[b], bad[a]];
+    const r = scanFollowingGuide(bad, rng).check();
+    assert.equal(r.ok, false, `case ${n}`);
+    assert.ok(r.errors.length > 0);
+    M.FACES.filter(f => f !== 'R').forEach(f => assert.deepEqual(faceOf(r.state, f), faceOf(bad, f), `case ${n} face ${f}`));
+    assert.ok(r.suspects.length >= 1 && r.suspects.length <= 2);
+    if (r.suspects.includes('R')) named++;
+  }
+  assert.ok(named >= N - 2, `misread face named in ${named} of ${N}`);
+});
+
+test('errors that name no stickers take their suspects from the uncertain stickers', () => {
+  const state = scrambled(seededRng(11));
+  const [e0, e1] = [M.EDGES[0], M.EDGES[1]]; // swap two whole edges: only the parity is wrong
+  e0.forEach((i, k) => { [state[i], state[e1[k]]] = [state[e1[k]], state[i]]; });
+  const zero = { U: 0, R: 0, F: 0, D: 0, L: 0, B: 0 };
+  const r = Scan.orient(state, [49], zero); // one uncertain sticker on the back face
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.every(e => e.cells.length === 0), r.errors.map(e => e.message).join(' | '));
+  assert.deepEqual(r.suspects, ['B']);
+});
+
+test('the guide suggests front, right, back, left, top, bottom, one whole-cube turn each', () => {
+  const rng = seededRng(12), state = scrambled(rng), s = Scan.createScan();
+  const faces = [], moves = [];
+  while (!s.done()) {
+    const g = s.guide();
+    faces.push(g.target);
+    moves.push(g.move);
+    const p = photoFollowingGuide(s, state);
+    s.setFace(p.face, toSamples(p.letters, rng));
+  }
+  assert.deepEqual(faces, ['F', 'R', 'B', 'L', 'U', 'D']);
+  assert.deepEqual(moves, ['', 'y', 'y', 'y', "x'", 'y2']);
+  assert.equal(s.suggest(), null);
+  assert.equal(s.count(), 6);
+});
+
+test('the guide hint names the face to show and how it sits next to the last one', () => {
+  const rng = seededRng(13), s = Scan.createScan();
+  assert.equal(s.guide().hint, 'Hold the cube with green toward the camera and white on top.');
+  s.setFace('F', toSamples(faceOf(M.SOLVED, 'F'), rng));
+  assert.equal(s.guide().hint, 'Red is next to green: give the cube a quarter turn so red faces the camera.');
+  s.pick('B');
+  assert.equal(s.guide().target, 'B');
+  assert.equal(s.guide().hint, 'Blue is opposite green: turn the cube over so blue faces the camera.');
+});
+
+test('the camera captures the face it sees unless that face is already done', () => {
+  const rng = seededRng(14), s = Scan.createScan();
+  assert.deepEqual(s.seen(null), { capture: false, face: null, message: 'Show the green face, flat to the camera and filling most of the view.' });
+  assert.deepEqual(s.seen('F'), { capture: true, face: 'F', message: '✓ Green face found. Hold still…' });
+  assert.deepEqual(s.seen('R'), { capture: true, face: 'R', message: '✓ Red face found. Hold still…' });
+  s.setFace('R', toSamples(faceOf(M.SOLVED, 'R'), rng));
+  const t = s.target();
+  assert.notEqual(t, 'R');
+  const again = s.seen('R');
+  assert.equal(again.capture, false);
+  assert.equal(again.message, `Red is already scanned. Show the ${{ U: 'white', F: 'green', B: 'blue', L: 'orange', D: 'yellow' }[t]} face, or press Capture if this is it.`);
+  s.pick('R');
+  assert.deepEqual(s.seen('R'), { capture: true, face: 'R', message: '✓ Red face found. Hold still…' });
+});
+
+test('a picked face stays the target until it is captured', () => {
+  const rng = seededRng(15), s = Scan.createScan();
+  s.pick('D');
+  assert.equal(s.target(), 'D');
+  s.setFace('D', toSamples(faceOf(M.SOLVED, 'D'), rng));
+  assert.equal(s.faces.D.samples.length, 9);
+  assert.notEqual(s.target(), 'D');
+});
+
+test('scanning a face again after a failed check replaces it and fixes the cube', () => {
+  const rng = seededRng(16), truth = scrambled(rng), bad = truth.slice();
+  [bad[9], bad[10]] = [bad[10], bad[9]];
+  if (bad[9] === bad[10]) [bad[10], bad[11]] = [bad[11], bad[10]];
+  const s = scanFollowingGuide(bad, rng);
+  assert.equal(s.check().ok, false);
+  s.pick('R');
+  const p = photoFollowingGuide(s, truth);
+  assert.equal(p.face, 'R');
+  s.setFace('R', toSamples(p.letters, rng));
+  assert.equal(s.count(), 6);
+  const r = s.check();
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.state, truth);
+});
+
+test('the guide cube shows the centers and the faces scanned so far, the right way round', () => {
+  const rng = seededRng(17), truth = scrambled(rng), s = Scan.createScan();
+  for (let k = 0; k < 2; k++) {
+    const p = photoFollowingGuide(s, truth);
+    s.setFace(p.face, toSamples(p.letters, rng));
+  }
+  const g = s.guideState();
+  assert.deepEqual(faceOf(g, 'F'), faceOf(truth, 'F'));
+  assert.deepEqual(faceOf(g, 'R'), faceOf(truth, 'R'));
+  for (const f of ['U', 'D', 'L', 'B']) {
+    assert.deepEqual(faceOf(g, f), faceOf(M.SOLVED, f).map((c, i) => (i === 4 ? c : 'x')));
+  }
+});
+
+test('orient is quick enough for a phone', () => {
+  const state = scrambled(seededRng(18));
+  const t = process.hrtime.bigint();
+  Scan.orient(state, [], {});
+  const ms = Number(process.hrtime.bigint() - t) / 1e6;
+  assert.ok(ms < 300, `${ms.toFixed(0)} ms`);
 });
 
 // A detection as findFace returns it: a square of side `size` at (x, y).
 const det = (x, y, size = 100, method = 'grid') => ({ method, corners: [[x, y], [x + size, y], [x + size, y + size], [x, y + size]] });
 
-test('live capture waits for a steady grid with the right center', () => {
+test('live capture waits for the same face held steady', () => {
   const st = Scan.createSteadiness({ needed: 4, tolerance: 0.05 });
-  assert.equal(st.push(det(10, 10), true), false);
-  assert.equal(st.push(det(12, 11), true), false);
-  assert.equal(st.push(det(11, 12), true), false);
+  assert.equal(st.push(det(10, 10), 'F'), false);
+  assert.equal(st.push(det(12, 11), 'F'), false);
+  assert.equal(st.push(det(11, 12), 'F'), false);
   assert.equal(st.progress(), 0.75);
-  assert.equal(st.push(det(12, 12), true), true, 'fourth steady frame captures');
+  assert.equal(st.push(det(12, 12), 'F'), true, 'fourth steady frame captures');
 });
 
-test('moving, a fallback detection or the wrong face starts the count again', () => {
+test('moving, a fallback detection, no face or a different face starts the count again', () => {
   const st = Scan.createSteadiness({ needed: 3, tolerance: 0.05 });
-  st.push(det(10, 10), true);
-  st.push(det(10, 10), true);
-  assert.equal(st.push(det(30, 10), true), false, 'moved 20% of the face');
+  st.push(det(10, 10), 'F');
+  st.push(det(10, 10), 'F');
+  assert.equal(st.push(det(30, 10), 'F'), false, 'moved 20% of the face');
   assert.equal(st.progress(), 1 / 3);
-  st.push(det(30, 10), true);
-  assert.equal(st.push(det(30, 10, 100, 'body'), true), false);
+  st.push(det(30, 10), 'F');
+  assert.equal(st.push(det(30, 10, 100, 'body'), 'F'), false);
   assert.equal(st.progress(), 0);
-  st.push(det(30, 10), true);
-  assert.equal(st.push(det(30, 10), false), false, 'center does not match the face asked for');
+  st.push(det(30, 10), 'F');
+  assert.equal(st.push(det(30, 10), null), false, 'no face that may be captured');
   assert.equal(st.progress(), 0);
-  st.push(det(30, 10), true);
+  st.push(det(30, 10), 'F');
+  assert.equal(st.push(det(30, 10), 'R'), false, 'a different face');
+  assert.equal(st.progress(), 1 / 3);
   st.reset();
   assert.equal(st.progress(), 0);
+});
+
+test('a flickering center never captures', () => {
+  const st = Scan.createSteadiness({ needed: 3, tolerance: 0.05 });
+  for (let k = 0; k < 20; k++) assert.equal(st.push(det(10, 10), k % 2 ? 'R' : 'L'), false);
 });

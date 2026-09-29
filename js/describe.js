@@ -67,6 +67,18 @@
     return `${r.lead(c)} ${cap(c(r.neighbor))} is ${WHERE[r.side.join('')]}.`;
   }
 
+  // Scanning: which face to show next, relative to the one facing the camera now (null at the start;
+  // `top` then names the face on top). How the cube is held is only a guess, so no left/right words.
+  function nextFaceHint(from, to, top) {
+    const n = f => NAMES[M.centerColor(M.SOLVED, f)];
+    if (!from) return `Hold the cube with ${n(to)} toward the camera${top ? ` and ${n(top)} on top` : ''}.`;
+    if (from === to) return `Keep ${n(to)} toward the camera.`;
+    const dot = M.NORMALS[from].reduce((s, v, k) => s + v * M.NORMALS[to][k], 0);
+    return dot === 0
+      ? `${cap(n(to))} is next to ${n(from)}: give the cube a quarter turn so ${n(to)} faces the camera.`
+      : `${cap(n(to))} is opposite ${n(from)}: turn the cube over so ${n(to)} faces the camera.`;
+  }
+
   function describeMove(m) {
     if (m === 'z2') {
       return { title: 'Flip the whole cube', detail: 'Roll the whole cube half a turn like a steering wheel. The front stays facing you; top and bottom swap, and so do left and right.' };
@@ -96,5 +108,5 @@
     return `Hold ${NAMES[M.centerColor(picture, 'U')]} on top and ${NAMES[M.centerColor(picture, 'F')]} facing you to see it like the picture.`;
   }
 
-  return { NAMES, FACE_WORD, TURNS, READING, region, lookAt, faceHint, describeMove, centerChange, pictureHint };
+  return { NAMES, FACE_WORD, TURNS, READING, region, lookAt, faceHint, nextFaceHint, describeMove, centerChange, pictureHint };
 });

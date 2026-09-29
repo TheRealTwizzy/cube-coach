@@ -191,3 +191,17 @@ test('a glossy reflection band: mostly still found, never a wrong grid', () => {
   assert.ok(found >= 6, `${found}/10 found`);
   assert.equal(wrongGrid, 0);
 });
+
+test('nameCenters gives six centers six different colors, even when warm light makes white look yellow', () => {
+  const rng = seededRng(21), letters = ['w', 'y', 'g', 'b', 'r', 'o'];
+  for (let n = 0; n < 60; n++) {
+    const exposure = 0.6 + rng() * 0.6, warm = rng() * 0.3;
+    const order = letters.slice().sort(() => rng() - 0.5);
+    const labs = order.map(c => V.rgbToLab(light(SHADES[c], exposure, warm)));
+    assert.deepEqual(V.nameCenters(labs), order, `exposure ${exposure.toFixed(2)} warm ${warm.toFixed(2)}`);
+  }
+  for (let n = 0; n < 30; n++) {
+    const labs = Array.from({ length: 6 }, () => V.rgbToLab([rng() * 255, rng() * 255, rng() * 255]));
+    assert.equal(new Set(V.nameCenters(labs)).size, 6);
+  }
+});

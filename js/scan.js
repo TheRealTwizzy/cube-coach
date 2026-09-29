@@ -1,53 +1,179 @@
-// A cube scan: six photos, one per face, taken in a fixed order with the same holds as the
-// painting hints. Collects each face's 9 color samples and turns them into a cube state.
+// A cube scan: six faces shown to the camera in any order and any way up. Each face is known by its
+// center color; which way round each photo was is worked out at the end, by trying every quarter
+// turn of every face and keeping the one real cube (closest to how the guide asked for the cube to
+// be held when several fit).
 (function (root, factory) {
   const isNode = typeof module === 'object' && module.exports;
   const api = isNode
-    ? factory(require('./cube.js'), require('./describe.js'), require('./vision.js'))
-    : factory(root.CubeModel, root.CubeDescribe, root.CubeVision);
+    ? factory(require('./cube.js'), require('./describe.js'), require('./vision.js'), require('./validate.js'))
+    : factory(root.CubeModel, root.CubeDescribe, root.CubeVision, root.CubeValidate);
   if (isNode) module.exports = api;
   else root.CubeScan = api;
-})(typeof self !== 'undefined' ? self : this, function (M, D, V) {
+})(typeof self !== 'undefined' ? self : this, function (M, D, V, Val) {
   'use strict';
 
-  const ORDER = ['F', 'R', 'B', 'L', 'U', 'D'];
+  // One quarter turn (clockwise as seen) of a face's 9 stickers, row by row: new[i] = old[QUARTER[i]].
+  const QUARTER = [6, 3, 0, 7, 4, 1, 8, 5, 2];
+  function turnFace(nine, k) {
+    let a = nine.slice();
+    for (let n = ((k % 4) + 4) % 4; n > 0; n--) a = QUARTER.map(j => a[j]);
+    return a;
+  }
+
+  const FACE_OF_COLOR = {};
+  M.FACES.forEach(f => { FACE_OF_COLOR[M.centerColor(M.SOLVED, f)] = f; });
+  const name = f => D.NAMES[M.centerColor(M.SOLVED, f)];
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const faceForCenter = samples => FACE_OF_COLOR[V.colorLetter(samples[4].lab)];
+
+  // Holds are whole-cube rotations (move lists) from white on top, green facing the camera.
+  const TO_FRONT = { F: '', R: 'y', L: "y'", B: 'y2', U: "x'", D: 'x' };
+  const withMove = (hold, move) => (move ? hold.concat([move]) : hold.slice());
+  const slotOf = (hold, face) => {
+    const held = M.applyMoves(M.SOLVED, hold), color = M.centerColor(M.SOLVED, face);
+    return M.FACES.find(g => M.centerColor(held, g) === color);
+  };
+  const turnToFront = (hold, face) => TO_FRONT[slotOf(hold, face)];
+  const shortest = hold => M.ROTATIONS.find(r => M.centerKey(M.applyMoves(M.SOLVED, r)) === M.centerKey(M.applyMoves(M.SOLVED, hold)));
+  const INDEX = [...Array(54).keys()];
+  // How the photo of `face`, held as `hold` (face toward the camera), is turned from the net.
+  function photoTurns(hold, face) {
+    const photo = M.applyMoves(INDEX, hold).slice(18, 27), fi = M.FACES.indexOf(face);
+    const net = INDEX.slice(fi * 9, fi * 9 + 9);
+    for (let k = 0; k < 4; k++) if (turnFace(net, k).every((v, i) => v === photo[i])) return k;
+    return null;
+  }
+
+  // photos: 54 letters, each face's 9 as photographed. expected: quarter turns that put each photo
+  // the net's way round if the cube was held as the guide said (a missing face has no preference).
+  const NINE = [0, 1, 2, 3].map(k => turnFace([...Array(9).keys()], k));
+  function orient(photos, uncertain = [], expected = {}) {
+    const turned = M.FACES.map((f, fi) => NINE.map(map => map.map(p => photos[fi * 9 + p])));
+    const exp = M.FACES.map(f => (Number.isInteger(expected[f]) ? expected[f] : null));
+    const valid = new Map();
+    let bad = null;
+    for (let c = 0; c < 4096; c++) {
+      const ks = M.FACES.map((f, i) => (c >> (2 * i)) & 3);
+      const state = [].concat(...ks.map((k, i) => turned[i][k]));
+      const off = ks.reduce((n, k, i) => n + (exp[i] !== null && k !== exp[i] ? 1 : 0), 0);
+      const key = state.join(''), seen = valid.get(key);
+      if (seen) { if (off < seen.off) Object.assign(seen, { ks, off }); continue; }
+      const v = Val.validate(state);
+      if (v.ok) valid.set(key, { ks, off, state });
+      else if (!bad || v.errors.length < bad.errors.length || (v.errors.length === bad.errors.length && off < bad.off)) bad = { ks, off, state, errors: v.errors };
+    }
+    const unc = new Set(uncertain);
+    const follow = ks => {
+      const out = [];
+      ks.forEach((k, fi) => NINE[k].forEach((p, i) => { if (unc.has(fi * 9 + p)) out.push(fi * 9 + i); }));
+      return out.sort((a, b) => a - b);
+    };
+    const turnsOf = ks => Object.fromEntries(M.FACES.map((f, i) => [f, ks[i]]));
+    if (valid.size) {
+      const list = [...valid.values()], least = Math.min(...list.map(v => v.off));
+      const [chosen, ...ties] = list.filter(v => v.off === least);
+      const cells = new Set();
+      ties.forEach(v => v.state.forEach((c, i) => { if (c !== chosen.state[i]) cells.add(i); }));
+      const ambiguousCells = [...cells].sort((a, b) => a - b);
+      return {
+        ok: true, state: chosen.state, turns: turnsOf(chosen.ks), uncertain: follow(chosen.ks), errors: [], suspects: [],
+        ambiguous: M.FACES.filter((f, fi) => ambiguousCells.some(i => Math.floor(i / 9) === fi)), ambiguousCells,
+      };
+    }
+    // Not a real cube whichever way the faces are turned: keep the closest, and name the faces most
+    // likely misread (stickers in the errors that were also close calls count most).
+    const u = follow(bad.ks), close = new Set(u), wrong = new Set(bad.errors.flatMap(e => e.cells));
+    const score = M.FACES.map((f, fi) => {
+      let s = 0;
+      for (let i = fi * 9; i < fi * 9 + 9; i++) s += (wrong.has(i) && close.has(i) ? 3 : 0) + (wrong.has(i) ? 1 : 0) + (close.has(i) ? 1 : 0);
+      return s;
+    });
+    const suspects = M.FACES.map((f, fi) => ({ f, s: score[fi] })).filter(x => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 2).map(x => x.f);
+    return { ok: false, state: bad.state, turns: turnsOf(bad.ks), uncertain: u, errors: bad.errors, suspects, ambiguous: [], ambiguousCells: [] };
+  }
 
   function createScan() {
     const faces = {};
-    const photoNo = face => ORDER.indexOf(face) + 1;
+    let hold = [], last = null, picked = null;
+    const PREFER = ['', 'y', "y'", "x'", 'x', 'y2']; // quarter turns first, turning over last
+    const suggest = () => {
+      let best = null, rank = Infinity;
+      M.FACES.forEach(f => {
+        if (faces[f]) return;
+        const r = PREFER.indexOf(turnToFront(hold, f));
+        if (r < rank) { rank = r; best = f; }
+      });
+      return best;
+    };
+    const target = () => picked || suggest();
     return {
       faces,
-      step() {
-        const index = ORDER.findIndex(f => !faces[f]);
-        if (index < 0) return null;
-        const face = ORDER[index];
-        return { index, face, total: ORDER.length, instruction: D.faceHint(face, M.SOLVED) };
+      suggest,
+      target,
+      pick(face) { picked = face; },
+      count: () => Object.keys(faces).length,
+      done: () => M.FACES.every(f => faces[f]),
+      // How to bring the target face to the camera from the hold the guide last showed.
+      guide() {
+        const t = target();
+        if (!t) return { target: null, hold: hold.slice(), move: '', from: last, hint: '' };
+        const move = turnToFront(hold, t);
+        const top = last ? null : slotOfTop(withMove(hold, move));
+        return { target: t, hold: hold.slice(), move, from: last, hint: D.nextFaceHint(last, t, top) };
       },
-      setFace(face, samples) { faces[face] = samples; },
-      redo(face) { delete faces[face]; },
-      done: () => ORDER.every(f => faces[f]),
-      // The center shows which face is in the photo; it must be the face this step asked for.
-      // live: worded for the camera view rather than a photo already taken.
-      checkCenter(face, samples, { live = false } = {}) {
-        const seen = V.colorLetter(samples[4].lab), wanted = M.centerColor(M.SOLVED, face);
-        if (seen === wanted) return null;
-        return `${live ? 'The center' : `Photo ${photoNo(face)}'s center`} looks ${D.NAMES[seen]}, but this step needs the ${D.NAMES[wanted]} face.`;
+      // The live camera sees `face` (from its center, or null): may it be captured, and what to say.
+      seen(face) {
+        const t = target();
+        if (!face) {
+          return { capture: false, face: null, message: t ? `Show the ${name(t)} face, flat to the camera and filling most of the view.` : 'All six faces are scanned. Tap a face to scan it again.' };
+        }
+        if (face === t || !faces[face]) return { capture: true, face, message: `✓ ${cap(name(face))} face found. Hold still…` };
+        return {
+          capture: false, face,
+          message: t ? `${cap(name(face))} is already scanned. Show the ${name(t)} face, or press Capture if this is it.` : `${cap(name(face))} is already scanned. Tap it to scan it again.`,
+        };
       },
-      result() {
-        const { colors, uncertain } = V.classify(faces);
-        return { state: colors, uncertain };
+      // A face shown to the camera: assume the cube was turned the one way the guide shows.
+      setFace(face, samples) {
+        const next = withMove(hold, turnToFront(hold, face));
+        faces[face] = { samples, expected: (4 - photoTurns(next, face)) % 4 };
+        hold = shortest(next);
+        last = face;
+        if (picked === face) picked = null;
+      },
+      // The guide cube: centers, plus each scanned face's colors put the net's way round.
+      guideState() {
+        const g = M.SOLVED.map((c, i) => (i % 9 === 4 ? c : 'x'));
+        M.FACES.forEach((f, fi) => {
+          const e = faces[f];
+          if (!e) return;
+          turnFace(e.samples.map(s => V.colorLetter(s.lab)), e.expected).forEach((c, i) => { if (i !== 4) g[fi * 9 + i] = c; });
+        });
+        return g;
+      },
+      // All six faces: name the centers together (so one misread center can't clash), sort the
+      // colors, then turn each face the way that makes a real cube.
+      check() {
+        const names = V.nameCenters(M.FACES.map(f => faces[f].samples[4].lab));
+        const keyed = {}, expected = {};
+        M.FACES.forEach((f, i) => { const g = FACE_OF_COLOR[names[i]]; keyed[g] = faces[f].samples; expected[g] = faces[f].expected; });
+        const { colors, uncertain } = V.classify(keyed);
+        return Object.assign(orient(colors, uncertain, expected), { renamed: M.FACES.filter((f, i) => FACE_OF_COLOR[names[i]] !== f) });
       },
     };
   }
+  const slotOfTop = hold => FACE_OF_COLOR[M.centerColor(M.applyMoves(M.SOLVED, hold), 'U')];
 
-  // Live camera: capture once the grid has been found in about the same place for `needed` frames
-  // in a row with the center matching the face asked for. Any fallback detection, wrong center or
-  // movement of more than `tolerance` (fraction of the face size) starts the count again.
+  // Live camera: capture once the same face has been found in about the same place for `needed`
+  // frames in a row. A fallback detection, no capturable face, another face or movement of more than
+  // `tolerance` (fraction of the face size) starts the count again.
   function createSteadiness({ needed = 6, tolerance = 0.06 } = {}) {
-    let last = null, count = 0;
+    let last = null, count = 0, face = null;
+    const reset = () => { last = null; count = 0; face = null; };
     return {
-      push(found, centerOk) {
-        if (!found || found.method !== 'grid' || !centerOk) { last = null; count = 0; return false; }
+      push(found, f) {
+        if (!found || found.method !== 'grid' || !f) { reset(); return false; }
+        if (f !== face) { reset(); face = f; }
         const [a, b] = found.corners;
         const size = Math.hypot(b[0] - a[0], b[1] - a[1]);
         const moved = last ? Math.max(...found.corners.map((p, k) => Math.hypot(p[0] - last[k][0], p[1] - last[k][1]))) / size : Infinity;
@@ -55,10 +181,10 @@
         last = found.corners.map(p => p.slice());
         return count >= needed;
       },
-      reset() { last = null; count = 0; },
+      reset,
       progress: () => Math.min(1, count / needed),
     };
   }
 
-  return { ORDER, createScan, createSteadiness };
+  return { QUARTER, turnFace, faceForCenter, turnToFront, photoTurns, orient, createScan, createSteadiness };
 });

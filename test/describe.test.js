@@ -86,3 +86,21 @@ test('"as seen from the … face" matches each move\'s real turning axis', () =>
     assert.deepEqual(M.NORMALS[face], M.moveGeometry(base).axis, base);
   }
 });
+
+test('nextFaceHint says which face to show and how it sits next to the one facing the camera', () => {
+  assert.equal(D.nextFaceHint(null, 'F', 'U'), 'Hold the cube with green toward the camera and white on top.');
+  assert.equal(D.nextFaceHint(null, 'U', 'B'), 'Hold the cube with white toward the camera and blue on top.');
+  assert.equal(D.nextFaceHint('F', 'R'), 'Red is next to green: give the cube a quarter turn so red faces the camera.');
+  assert.equal(D.nextFaceHint('F', 'B'), 'Blue is opposite green: turn the cube over so blue faces the camera.');
+  assert.equal(D.nextFaceHint('R', 'R'), 'Keep red toward the camera.');
+  for (const a of M.FACES) {
+    for (const b of M.FACES) {
+      if (a === b) continue;
+      const dot = M.NORMALS[a].reduce((s, v, k) => s + v * M.NORMALS[b][k], 0);
+      const hint = D.nextFaceHint(a, b);
+      assert.equal(hint.includes('next to'), dot === 0, `${a} → ${b}`);
+      assert.equal(hint.includes('opposite'), dot === -1, `${a} → ${b}`);
+      assert.doesNotMatch(hint, /left|right|clockwise/, 'no direction words: the hold is not known for sure');
+    }
+  }
+});
