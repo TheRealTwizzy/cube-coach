@@ -120,8 +120,22 @@ test('following the guide rebuilds nearly solved cubes exactly, with no correcti
     assert.equal(r.ok, true, `case ${n}`);
     assert.deepEqual(r.state, state, `case ${n}`);
     M.FACES.forEach(f => assert.equal(r.turns[f], s.faces[f].expected, `case ${n} face ${f}`));
-    assert.deepEqual(r.ambiguous, [], `case ${n}`);
+    if (n >= 18) assert.deepEqual(r.ambiguous, [], `scrambled case ${n}: only one real cube fits`);
   });
+});
+
+test('holding the cube upside down all along: a nearly solved cube is flagged, never silently wrong', () => {
+  const rng = seededRng(19), truth = M.applyMoves(M.SOLVED, 'R'), s = Scan.createScan();
+  while (!s.done()) {
+    const p = photoFollowingGuide(s, truth);
+    s.setFace(p.face, toSamples(Scan.turnFace(p.letters, 2), rng)); // every photo half a turn from the guide
+  }
+  const r = s.check();
+  assert.equal(r.ok, true);
+  if (r.state.join('') !== truth.join('')) {
+    assert.ok(r.ambiguous.length > 0, 'a different real cube was chosen, so it must be flagged');
+    truth.forEach((c, i) => { if (c !== r.state[i]) assert.ok(r.ambiguousCells.includes(i), `sticker ${i} is wrong but not flagged`); });
+  }
 });
 
 test('with no idea how faces were held, a nearly solved cube is flagged as ambiguous', () => {
@@ -132,9 +146,11 @@ test('with no idea how faces were held, a nearly solved cube is flagged as ambig
   assert.ok(r.ambiguous.length > 0);
   assert.ok(r.ambiguousCells.length > 0);
   r.ambiguousCells.forEach(i => assert.ok(r.ambiguous.includes(M.FACES[Math.floor(i / 9)])));
+  // Knowing how each face was held picks the right cube, but the other real cubes stay flagged
+  // in case the cube was held some other way.
   const known = Scan.orient(state, [], { U: 0, R: 0, F: 0, D: 0, L: 0, B: 0 });
   assert.deepEqual(known.state, state);
-  assert.deepEqual(known.ambiguous, []);
+  assert.ok(known.ambiguous.length > 0);
 });
 
 test('a misread pair of stickers: not a real cube, the right faces kept, and the misread face named', () => {
@@ -189,7 +205,8 @@ test('the guide hint names the face to show and how it sits next to the last one
   assert.equal(s.guide().hint, 'Red is next to green: give the cube a quarter turn so red faces the camera.');
   s.pick('B');
   assert.equal(s.guide().target, 'B');
-  assert.equal(s.guide().hint, 'Blue is opposite green: turn the cube over so blue faces the camera.');
+  assert.equal(s.guide().move, 'y2');
+  assert.equal(s.guide().hint, 'Blue is opposite green: keep white on top and spin the cube half a turn so blue faces the camera.');
 });
 
 test('the camera captures the face it sees unless that face is already done', () => {
@@ -205,6 +222,34 @@ test('the camera captures the face it sees unless that face is already done', ()
   assert.equal(again.message, `Red is already scanned. Show the ${{ U: 'white', F: 'green', B: 'blue', L: 'orange', D: 'yellow' }[t]} face, or press Capture if this is it.`);
   s.pick('R');
   assert.deepEqual(s.seen('R'), { capture: true, face: 'R', message: '✓ Red face found. Hold still…' });
+});
+
+test('a face the user tapped is not taken over by another face the camera happens to see', () => {
+  const s = Scan.createScan();
+  s.pick('D', true);
+  assert.equal(s.seen(null).capture, false); // nothing in view yet: the tap still holds
+  assert.deepEqual(s.seen('R'), { capture: false, face: 'R', message: 'I see the red face. Show the yellow face, or tap red to scan that one.' });
+  assert.equal(s.target(), 'D');
+  assert.equal(s.seen(null).capture, false); // the face left the view: the tap no longer holds
+  assert.equal(s.seen('R').capture, true);
+  s.pick('U'); // picked by the camera, not tapped
+  assert.equal(s.seen('B').capture, true);
+});
+
+test('when the check renames two swapped centers, the faces are stored under their real names', () => {
+  const rng = seededRng(20), truth = scrambled(rng), s = Scan.createScan();
+  const red = toSamples(faceOf(truth, 'R'), rng), orange = toSamples(faceOf(truth, 'L'), rng);
+  for (const f of M.FACES) {
+    if (f === 'R') s.setFace('R', orange); // warm light: the orange face was saved as red…
+    else if (f === 'L') s.setFace('L', red); // …and the red face as orange
+    else s.setFace(f, toSamples(faceOf(truth, f), rng));
+  }
+  const r = s.check();
+  assert.deepEqual(r.renamed.slice().sort(), ['L', 'R']);
+  assert.equal(s.faces.R.samples, red);
+  assert.equal(s.faces.L.samples, orange);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.state, truth);
 });
 
 test('a picked face stays the target until it is captured', () => {

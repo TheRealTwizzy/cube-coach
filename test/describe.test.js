@@ -91,7 +91,7 @@ test('nextFaceHint says which face to show and how it sits next to the one facin
   assert.equal(D.nextFaceHint(null, 'F', 'U'), 'Hold the cube with green toward the camera and white on top.');
   assert.equal(D.nextFaceHint(null, 'U', 'B'), 'Hold the cube with white toward the camera and blue on top.');
   assert.equal(D.nextFaceHint('F', 'R'), 'Red is next to green: give the cube a quarter turn so red faces the camera.');
-  assert.equal(D.nextFaceHint('F', 'B'), 'Blue is opposite green: turn the cube over so blue faces the camera.');
+  assert.equal(D.nextFaceHint('F', 'B', 'U'), 'Blue is opposite green: keep white on top and spin the cube half a turn so blue faces the camera.');
   assert.equal(D.nextFaceHint('R', 'R'), 'Keep red toward the camera.');
   for (const a of M.FACES) {
     for (const b of M.FACES) {

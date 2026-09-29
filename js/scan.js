@@ -70,10 +70,12 @@
     };
     const turnsOf = ks => Object.fromEntries(M.FACES.map((f, i) => [f, ks[i]]));
     if (valid.size) {
+      // The guide's holds pick the answer, but if the cube was held some other way any other real
+      // cube could be the true one: every sticker where one differs gets flagged.
       const list = [...valid.values()], least = Math.min(...list.map(v => v.off));
-      const [chosen, ...ties] = list.filter(v => v.off === least);
+      const chosen = list.find(v => v.off === least);
       const cells = new Set();
-      ties.forEach(v => v.state.forEach((c, i) => { if (c !== chosen.state[i]) cells.add(i); }));
+      list.forEach(v => { if (v !== chosen) v.state.forEach((c, i) => { if (c !== chosen.state[i]) cells.add(i); }); });
       const ambiguousCells = [...cells].sort((a, b) => a - b);
       return {
         ok: true, state: chosen.state, turns: turnsOf(chosen.ks), uncertain: follow(chosen.ks), errors: [], suspects: [],
@@ -94,7 +96,9 @@
 
   function createScan() {
     const faces = {};
-    let hold = [], last = null, picked = null;
+    // picked: the face to scan next if set (else the suggestion); tapped: the user chose it, so the
+    // camera seeing another face doesn't take over until that other face has left the view.
+    let hold = [], last = null, picked = null, tapped = false, sawOther = false;
     const PREFER = ['', 'y', "y'", "x'", 'x', 'y2']; // quarter turns first, turning over last
     const suggest = () => {
       let best = null, rank = Infinity;
@@ -110,7 +114,7 @@
       faces,
       suggest,
       target,
-      pick(face) { picked = face; },
+      pick(face, byUser = false) { picked = face; tapped = !!byUser; sawOther = false; },
       count: () => Object.keys(faces).length,
       done: () => M.FACES.every(f => faces[f]),
       // How to bring the target face to the camera from the hold the guide last showed.
@@ -118,14 +122,18 @@
         const t = target();
         if (!t) return { target: null, hold: hold.slice(), move: '', from: last, hint: '' };
         const move = turnToFront(hold, t);
-        const top = last ? null : slotOfTop(withMove(hold, move));
-        return { target: t, hold: hold.slice(), move, from: last, hint: D.nextFaceHint(last, t, top) };
+        return { target: t, hold: hold.slice(), move, from: last, hint: D.nextFaceHint(last, t, slotOfTop(withMove(hold, move))) };
       },
       // The live camera sees `face` (from its center, or null): may it be captured, and what to say.
       seen(face) {
         const t = target();
         if (!face) {
+          if (sawOther) tapped = sawOther = false;
           return { capture: false, face: null, message: t ? `Show the ${name(t)} face, flat to the camera and filling most of the view.` : 'All six faces are scanned. Tap a face to scan it again.' };
+        }
+        if (tapped && face !== t) {
+          sawOther = true;
+          return { capture: false, face, message: `I see the ${name(face)} face. Show the ${name(t)} face, or tap ${name(face)} to scan that one.` };
         }
         if (face === t || !faces[face]) return { capture: true, face, message: `✓ ${cap(name(face))} face found. Hold still…` };
         return {
@@ -139,7 +147,7 @@
         faces[face] = { samples, expected: (4 - photoTurns(next, face)) % 4 };
         hold = shortest(next);
         last = face;
-        if (picked === face) picked = null;
+        if (picked === face) { picked = null; tapped = false; }
       },
       // The guide cube: centers, plus each scanned face's colors put the net's way round.
       guideState() {
@@ -153,12 +161,21 @@
       },
       // All six faces: name the centers together (so one misread center can't clash), sort the
       // colors, then turn each face the way that makes a real cube.
+      // Renamed faces are stored under their real names, so scanning one again replaces the right one.
       check() {
         const names = V.nameCenters(M.FACES.map(f => faces[f].samples[4].lab));
+        const real = f => FACE_OF_COLOR[names[M.FACES.indexOf(f)]];
+        const renamed = M.FACES.filter(f => real(f) !== f);
+        if (renamed.length) {
+          const moved = M.FACES.map(f => [real(f), faces[f]]);
+          M.FACES.forEach(f => { delete faces[f]; });
+          moved.forEach(([g, e]) => { faces[g] = e; });
+          if (last) last = real(last);
+        }
         const keyed = {}, expected = {};
-        M.FACES.forEach((f, i) => { const g = FACE_OF_COLOR[names[i]]; keyed[g] = faces[f].samples; expected[g] = faces[f].expected; });
+        M.FACES.forEach(f => { keyed[f] = faces[f].samples; expected[f] = faces[f].expected; });
         const { colors, uncertain } = V.classify(keyed);
-        return Object.assign(orient(colors, uncertain, expected), { renamed: M.FACES.filter((f, i) => FACE_OF_COLOR[names[i]] !== f) });
+        return Object.assign(orient(colors, uncertain, expected), { renamed });
       },
     };
   }

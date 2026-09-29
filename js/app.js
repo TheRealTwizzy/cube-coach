@@ -368,7 +368,8 @@
     $('scan-photo').hidden = !shot;
     $('scan-read').hidden = !shot;
     $('scan-actions').hidden = !shot;
-    $('scan-fix').hidden = phase !== 'fix';
+    // After a failed check the fix box stays while faces are scanned again, so painting stays an option.
+    $('scan-fix').hidden = !fix || phase === 'checking' || !!shot;
   }
   function renderChips(current) {
     const box = $('scan-faces');
@@ -402,14 +403,17 @@
       renderScan();
       return;
     }
-    scan.pick(face);
+    scan.pick(face, true);
     const wasFix = phase === 'fix';
     phase = 'capture';
     $('scan-msg').textContent = '';
     if (live) live.steady.reset();
     renderScan();
     showGuide(true);
-    if (wasFix) startLive();
+    if (wasFix) {
+      startLive(); // the camera was off while the check ran
+      $(live ? 'scan-capture' : 'scan-take').focus({ preventScroll: true }); // the button tapped is gone
+    }
   }
 
   // ---------- the guide cube ----------
@@ -608,9 +612,12 @@
     }
     scan.setFace(f, shot.samples);
     clearShot();
-    $('scan-live').textContent = `${capName(f)} face saved. ${scan.count()} of 6 done.`;
-    announced = '';
-    if (scan.done()) { checkScan(); return; }
+    const saved = `${capName(f)} face saved, ${scan.count()} of 6.`;
+    if (scan.done()) { $('scan-live').textContent = `${saved} Checking your cube…`; checkScan(); return; }
+    // One announcement for both: what was saved, and what to show next.
+    const g = scan.guide();
+    announced = `Scanning the ${faceName(g.target)} face. ${g.hint}`;
+    $('scan-live').textContent = `${saved} ${announced}`;
     phase = 'capture';
     renderScan();
     showGuide(true);
@@ -620,9 +627,9 @@
   // ---------- checking the six faces ----------
   async function checkScan() {
     phase = 'checking';
+    fix = null;
     stopLive();
     renderScan();
-    $('scan-live').textContent = 'Checking your cube…';
     const mine = scan;
     const r = await later(() => mine.check()); // lets "Checking…" paint first
     if (scan !== mine) return; // cancelled meanwhile
@@ -755,8 +762,11 @@
     const found = Vis.findFace(img);
     const samples = found.method === 'grid' ? Vis.sampleFace(img, found.corners) : null;
     const seen = scan.seen(samples ? ScanLib.faceForCenter(samples) : null);
-    // Showing a face not scanned yet makes it the one being scanned.
-    if (seen.capture && seen.face !== scan.target()) {
+    // Showing a face not scanned yet makes it the one being scanned, once it has been seen in a few
+    // frames in a row (a flickering center must not flip the headline and guide back and forth).
+    live.seenRun = seen.face && live.seenFace === seen.face ? live.seenRun + 1 : 1;
+    live.seenFace = seen.face;
+    if (seen.capture && seen.face !== scan.target() && live.seenRun >= 3) {
       scan.pick(seen.face);
       renderScan();
       showGuide(false);
@@ -793,6 +803,7 @@
     img = img || liveFrame();
     if (!img) return;
     showShot(img, found || Vis.findFace(img), Vis.quality(img), face || scan.target(), labeled);
+    $('scan-live').textContent = `Captured the ${faceName(shot.face)} face. Check it, then press Looks right.`;
     $('scan-ok').focus({ preventScroll: true });
   }
   function usePhotoInstead() {

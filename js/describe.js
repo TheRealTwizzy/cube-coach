@@ -76,7 +76,8 @@
     const dot = M.NORMALS[from].reduce((s, v, k) => s + v * M.NORMALS[to][k], 0);
     return dot === 0
       ? `${cap(n(to))} is next to ${n(from)}: give the cube a quarter turn so ${n(to)} faces the camera.`
-      : `${cap(n(to))} is opposite ${n(from)}: turn the cube over so ${n(to)} faces the camera.`;
+      // A half turn about a different axis would show the face upside down: spin, keeping the top.
+      : `${cap(n(to))} is opposite ${n(from)}: ${top ? `keep ${n(top)} on top and ` : ''}spin the cube half a turn so ${n(to)} faces the camera.`;
   }
 
   function describeMove(m) {
