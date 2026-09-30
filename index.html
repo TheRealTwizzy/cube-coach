@@ -135,7 +135,6 @@
   .scan-handle { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 3px solid #fff; border-radius: 50%;
     background: rgba(29, 78, 216, .35); box-shadow: 0 0 0 2px rgba(0,0,0,.5); cursor: grab; touch-action: none; }
   .scan-review { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
-  .scan-review:not(:has(:not([hidden]))) { display: none; }
   .scan-read { display: grid; grid-template-columns: repeat(3, 28px); gap: 3px; padding: 3px; border-radius: 6px; background: var(--plastic); justify-self: start; }
   .scan-read span { width: 28px; height: 28px; border-radius: 4px; background: var(--c); }
   .st.check { outline: 3px dashed var(--danger); outline-offset: 1px; }
@@ -309,7 +308,7 @@
           </div>
           <button class="btn primary" id="scan-take" type="button">Take photo</button>
           <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
-          <div class="scan-review">
+          <div class="scan-review" id="scan-review" hidden>
             <div class="scan-photo" id="scan-photo" hidden>
               <canvas id="scan-canvas"></canvas>
             </div>

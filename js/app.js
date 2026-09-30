@@ -367,6 +367,7 @@
     if (g.target) $('scan-take').textContent = `Take a photo of the ${faceName(g.target)} face`;
     $('scan-photo').hidden = !shot;
     $('scan-read').hidden = !shot;
+    $('scan-review').hidden = !shot;
     $('scan-actions').hidden = !shot;
     // After a failed check the fix box stays while faces are scanned again, so painting stays an option.
     $('scan-fix').hidden = !fix || phase === 'checking' || !!shot;
@@ -439,6 +440,8 @@
   }
 
   // ---------- photos ----------
+  // Every photo is read back once; asking for a readback-friendly canvas avoids a slow GPU round trip.
+  const SHOT_CONTEXT = { willReadFrequently: true };
   function loadImage(file) {
     // Portrait phone photos carry their rotation in EXIF; ask for it to be applied.
     if (window.createImageBitmap) return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => loadImageElement(file));
@@ -467,7 +470,7 @@
     const canvas = $('scan-canvas'), s = Math.min(1, 480 / Math.max(source.width, source.height));
     canvas.width = Math.round(source.width * s);
     canvas.height = Math.round(source.height * s);
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', SHOT_CONTEXT);
     ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
     if (source.close) source.close(); // a full-size photo bitmap is tens of MB
     const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -495,7 +498,7 @@
     renderScan();
   }
   function drawShot() {
-    const canvas = $('scan-canvas'), ctx = canvas.getContext('2d'), H = Vis.homography(shot.corners);
+    const canvas = $('scan-canvas'), ctx = canvas.getContext('2d', SHOT_CONTEXT), H = Vis.homography(shot.corners);
     ctx.putImageData(shot.img, 0, 0);
     const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...H(...a)); ctx.lineTo(...H(...b)); ctx.stroke(); };
     [['rgba(0,0,0,.6)', 4], ['#fff', 2]].forEach(([color, width]) => {
