@@ -349,6 +349,12 @@ function orientCases() {
   for (const m of ['R', "U'", 'F2', 'M2', 'L D']) { const t = randomTurns(); add(M.applyMoves(M.SOLVED, m), t, fixOf(t)); add(M.applyMoves(M.SOLVED, m), t, {}); }
   const P = require('../js/patterns.js');
   P.entries().filter((e, i) => i % 15 === 0).forEach(e => { const t = randomTurns(); add(e.state, t, someOf(fixOf(t))); });
+  for (const name of ['Worms', 'The Superflip']) { // hundreds of real cubes fit these
+    const state = P.entries().find(e => e.name === name).state, misread = state.slice();
+    [misread[0], misread[1]] = [misread[1], misread[0]];
+    add(state, randomTurns(), {});
+    add(misread, randomTurns(), {});
+  }
   for (let n = 0; n < 10; n++) {
     const bad = scrambled(rng), f = Math.floor(rng() * 6) * 9, a = f + [0, 1, 2, 3, 5, 6, 7, 8][Math.floor(rng() * 8)];
     const b = f + [0, 1, 2, 3, 5, 6, 7, 8][Math.floor(rng() * 8)];
@@ -387,6 +393,19 @@ test('orient is quick enough for a phone', () => {
   // A phone is several times slower than this machine; these leave it well under a tenth of a second.
   assert.ok(median(times.real) < 8, `real cube: ${median(times.real).toFixed(1)} ms`);
   assert.ok(median(times.misread) < 25, `misread cube: ${median(times.misread).toFixed(1)} ms`);
+});
+
+test('orient stays quick for patterns that many turns of the faces would also make', () => {
+  const P = require('../js/patterns.js'), median = a => a.slice().sort((p, q) => p - q)[a.length >> 1];
+  for (const name of ['Worms', 'The Superflip']) {
+    const state = P.entries().find(e => e.name === name).state, times = [];
+    for (let n = 0; n < 5; n++) {
+      const t = process.hrtime.bigint();
+      Scan.orient(state, [], {});
+      times.push(Number(process.hrtime.bigint() - t) / 1e6);
+    }
+    assert.ok(median(times) < 12, `${name}: ${median(times).toFixed(1)} ms`);
+  }
 });
 
 // A detection as findFace returns it: a square of side `size` at (x, y).

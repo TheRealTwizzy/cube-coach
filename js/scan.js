@@ -50,37 +50,86 @@
   // The search gives faces their turn from the back face down to the top, so whole combinations come
   // in the order of counting 0…4095 (top face fastest). Each edge and corner is judged as soon as
   // all its faces have their turn: DONE_AT[d] lists the pieces completed at depth d.
-  const PIECES = M.EDGES.concat(M.CORNERS);
+  const PIECES = M.EDGES.concat(M.CORNERS); // slots 0-11 edges, 12-19 corners
   const DEPTH_FACE = [5, 4, 3, 2, 1, 0];
   const DONE_AT = DEPTH_FACE.map((fi, d) => {
     const set = new Set(DEPTH_FACE.slice(0, d + 1));
-    return PIECES.filter(p => p.every(i => set.has(Math.floor(i / 9))) && p.some(i => Math.floor(i / 9) === fi));
+    return PIECES.map((p, j) => j).filter(j => PIECES[j].every(i => set.has(Math.floor(i / 9))) && PIECES[j].some(i => Math.floor(i / 9) === fi));
   });
+  // Permutation parity, as validate works it out.
+  function parity(perm) {
+    const seen = new Array(perm.length).fill(false);
+    let swaps = 0;
+    for (let i = 0; i < perm.length; i++) {
+      let j = i, len = 0;
+      while (!seen[j]) { seen[j] = true; j = perm[j]; len++; }
+      if (len) swaps += len - 1;
+    }
+    return swaps % 2;
+  }
   function orient(photos, uncertain = [], expected = {}) {
     const turned = M.FACES.map((f, fi) => NINE.map(map => map.map(p => photos[fi * 9 + p])));
     const exp = M.FACES.map(f => (Number.isInteger(expected[f]) ? expected[f] : null));
-    // The color strings a real piece can show, from the centers (which no face turn moves): an edge
-    // either way round, a corner in any of its three turns (never mirrored), just as validate judges.
+    // What each color string a real piece can show says, judged just as validate judges it, from the
+    // centers (which no face turn moves): which edge and whether flipped (either way round), or which
+    // corner and how twisted (any of its three turns, never mirrored).
     const home = i => photos[Math.floor(i / 9) * 9 + 4];
-    const allowed = new Set();
-    M.EDGES.forEach(e => { const [a, b] = e.map(home); allowed.add(a + b); allowed.add(b + a); });
-    M.CORNERS.forEach(c => { const [a, b, x] = c.map(home); allowed.add(a + b + x); allowed.add(b + x + a); allowed.add(x + a + b); });
-    // Counting bad pieces bounds validate's errors only once it gets that far (all stickers known,
-    // six different centers, nine of each color); otherwise every combination is tried in full.
+    const look = new Map();
+    M.EDGES.forEach((e, k) => { const [a, b] = e.map(home); look.set(a + b, { piece: k, turn: 0 }); look.set(b + a, { piece: k, turn: 1 }); });
+    M.CORNERS.forEach((c, k) => {
+      const [a, b, x] = c.map(home);
+      look.set(a + b + x, { piece: k, turn: 0 }); look.set(x + a + b, { piece: k, turn: 1 }); look.set(b + x + a, { piece: k, turn: 2 });
+    });
+    // Counting from the pieces gives validate's errors exactly once validate gets that far (all
+    // stickers known, six different centers, nine of each color); otherwise every combination is
+    // checked by validate itself.
     const counts = {};
     photos.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
     const sane = M.COLORS.every(c => counts[c] === 9) && new Set(M.FACES.map((f, fi) => photos[fi * 9 + 4])).size === 6;
-    const valid = new Map(), state = new Array(54), ks = [0, 0, 0, 0, 0, 0];
+    const valid = new Map(), state = new Array(54), ks = [0, 0, 0, 0, 0, 0], pieceAt = new Array(PIECES.length);
     let bad = null;
-    const leaf = off => {
-      const key = state.join(''), seen = valid.get(key);
+    // validate's error count for the finished combination: bad pieces plus pieces seen twice, or if
+    // there are none, a twisted corner, a flipped edge and swapped pieces.
+    const errorCount = broken => {
+      const twice = [new Array(12).fill(0), new Array(8).fill(0)];
+      let dup = 0;
+      pieceAt.forEach((info, j) => { if (info && ++twice[j < 12 ? 0 : 1][info.piece] === 2) dup++; });
+      if (broken + dup) return broken + dup;
+      const edges = pieceAt.slice(0, 12), corners = pieceAt.slice(12);
+      const flip = edges.reduce((s, e) => s + e.turn, 0) % 2, twist = corners.reduce((s, c) => s + c.turn, 0) % 3;
+      return (twist ? 1 : 0) + (flip ? 1 : 0) + (parity(edges.map(e => e.piece)) !== parity(corners.map(c => c.piece)) ? 1 : 0);
+    };
+    // Two combinations make the same cube exactly when every face shows the same stickers, so a
+    // combination's key is which distinct version of each face it uses (faces with a symmetric
+    // pattern look the same after some turns). A cube met again needs no second look.
+    const version = turned.map(four => four.map((t, k) => four.findIndex(u => u.every((c, i) => c === t[i]))));
+    const keyOf = () => ks.reduce((key, k, fi) => key + version[fi][k] * 4 ** fi, 0);
+    const known = new Map(); // key → validate's error count, for cubes that aren't real
+    const keep = (key, errors, off) => {
+      if (!errors) {
+        const seen = valid.get(key);
+        if (seen) { if (off < seen.off) Object.assign(seen, { ks: ks.slice(), off }); }
+        else valid.set(key, { ks: ks.slice(), off, state: state.slice() });
+      } else if (!valid.size && (!bad || errors < bad.errors.length || (errors === bad.errors.length && off < bad.off))) {
+        bad = { ks: ks.slice(), off, state: state.slice(), errors: Val.validate(state).errors }; // the messages, only when kept
+      }
+    };
+    const leaf = (broken, off) => {
+      const key = keyOf();
+      if (sane) {
+        if (valid.has(key)) { keep(key, 0, off); return; }
+        if (!known.has(key)) known.set(key, errorCount(broken));
+        keep(key, known.get(key), off);
+        return;
+      }
+      const seen = valid.get(key);
       if (seen) { if (off < seen.off) Object.assign(seen, { ks: ks.slice(), off }); return; }
       const v = Val.validate(state);
       if (v.ok) valid.set(key, { ks: ks.slice(), off, state: state.slice() });
       else if (!bad || v.errors.length < bad.errors.length || (v.errors.length === bad.errors.length && off < bad.off)) bad = { ks: ks.slice(), off, state: state.slice(), errors: v.errors };
     };
     const visit = (d, broken, offSoFar) => {
-      if (d === 6) { leaf(offSoFar); return; }
+      if (d === 6) { leaf(broken, offSoFar); return; }
       const fi = DEPTH_FACE[d];
       for (let k = 0; k < 4; k++) {
         const t = turned[fi][k];
@@ -89,7 +138,11 @@
         const off = offSoFar + (exp[fi] !== null && k !== exp[fi] ? 1 : 0);
         let b = broken;
         if (sane) {
-          for (const p of DONE_AT[d]) if (!allowed.has(p.map(i => state[i]).join(''))) b++;
+          for (const j of DONE_AT[d]) {
+            const p = PIECES[j];
+            pieceAt[j] = look.get(p.length === 2 ? state[p[0]] + state[p[1]] : state[p[0]] + state[p[1]] + state[p[2]]);
+            if (!pieceAt[j]) b++;
+          }
           // Every bad piece is one of validate's errors, so skip what can't be a real cube once one is
           // known, and what can't beat the closest non-cube so far (fewer errors, then fewer off-guide).
           if (b > 0 && valid.size) continue;
