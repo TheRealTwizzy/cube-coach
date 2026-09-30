@@ -378,33 +378,34 @@ test('the fast orient gives exactly the same answer as trying every combination 
   });
 });
 
+// Speed is measured against the exhaustive search on the same machine, so a slow or busy test
+// runner can't fail it (the exhaustive search takes about a tenth of a second here).
+const msOf = f => { const t = process.hrtime.bigint(); f(); return Number(process.hrtime.bigint() - t) / 1e6; };
+const median = a => a.slice().sort((p, q) => p - q)[a.length >> 1];
+function speedup(inputs, runs = 1) {
+  const all = [].concat(...Array(runs).fill(inputs));
+  all.concat(all).forEach(s => Scan.orient(s, [], {})); // warm up the JIT first
+  return median(inputs.map(s => msOf(() => referenceOrient(s, [], {})))) / median(all.map(s => msOf(() => Scan.orient(s, [], {}))));
+}
+
 test('orient is quick enough for a phone', () => {
-  const rng = seededRng(18), times = { real: [], misread: [] };
-  for (let n = 0; n < 10; n++) {
+  const rng = seededRng(18), real = [], misread = [];
+  for (let n = 0; n < 5; n++) {
     const state = scrambled(rng), bad = state.slice();
     [bad[9], bad[10]] = [bad[10], bad[9]];
-    for (const [kind, s] of [['real', state], ['misread', bad]]) {
-      const t = process.hrtime.bigint();
-      Scan.orient(s, [], {});
-      times[kind].push(Number(process.hrtime.bigint() - t) / 1e6);
-    }
+    real.push(state);
+    misread.push(bad);
   }
-  const median = a => a.slice().sort((p, q) => p - q)[a.length >> 1];
-  // A phone is several times slower than this machine; these leave it well under a tenth of a second.
-  assert.ok(median(times.real) < 8, `real cube: ${median(times.real).toFixed(1)} ms`);
-  assert.ok(median(times.misread) < 25, `misread cube: ${median(times.misread).toFixed(1)} ms`);
+  const r = speedup(real), m = speedup(misread);
+  assert.ok(r > 10, `real cube: only ${r.toFixed(1)}× faster than trying every combination`);
+  assert.ok(m > 10, `misread cube: only ${m.toFixed(1)}× faster than trying every combination`);
 });
 
 test('orient stays quick for patterns that many turns of the faces would also make', () => {
-  const P = require('../js/patterns.js'), median = a => a.slice().sort((p, q) => p - q)[a.length >> 1];
+  const P = require('../js/patterns.js');
   for (const name of ['Worms', 'The Superflip']) {
-    const state = P.entries().find(e => e.name === name).state, times = [];
-    for (let n = 0; n < 5; n++) {
-      const t = process.hrtime.bigint();
-      Scan.orient(state, [], {});
-      times.push(Number(process.hrtime.bigint() - t) / 1e6);
-    }
-    assert.ok(median(times) < 12, `${name}: ${median(times).toFixed(1)} ms`);
+    const x = speedup([P.entries().find(e => e.name === name).state], 5);
+    assert.ok(x > 5, `${name}: only ${x.toFixed(1)}× faster than trying every combination`);
   }
 });
 
