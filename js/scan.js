@@ -47,21 +47,58 @@
   // photos: 54 letters, each face's 9 as photographed. expected: quarter turns that put each photo
   // the net's way round if the cube was held as the guide said (a missing face has no preference).
   const NINE = [0, 1, 2, 3].map(k => turnFace([...Array(9).keys()], k));
+  // The search gives faces their turn from the back face down to the top, so whole combinations come
+  // in the order of counting 0…4095 (top face fastest). Each edge and corner is judged as soon as
+  // all its faces have their turn: DONE_AT[d] lists the pieces completed at depth d.
+  const PIECES = M.EDGES.concat(M.CORNERS);
+  const DEPTH_FACE = [5, 4, 3, 2, 1, 0];
+  const DONE_AT = DEPTH_FACE.map((fi, d) => {
+    const set = new Set(DEPTH_FACE.slice(0, d + 1));
+    return PIECES.filter(p => p.every(i => set.has(Math.floor(i / 9))) && p.some(i => Math.floor(i / 9) === fi));
+  });
   function orient(photos, uncertain = [], expected = {}) {
     const turned = M.FACES.map((f, fi) => NINE.map(map => map.map(p => photos[fi * 9 + p])));
     const exp = M.FACES.map(f => (Number.isInteger(expected[f]) ? expected[f] : null));
-    const valid = new Map();
+    // The color strings a real piece can show, from the centers (which no face turn moves): an edge
+    // either way round, a corner in any of its three turns (never mirrored), just as validate judges.
+    const home = i => photos[Math.floor(i / 9) * 9 + 4];
+    const allowed = new Set();
+    M.EDGES.forEach(e => { const [a, b] = e.map(home); allowed.add(a + b); allowed.add(b + a); });
+    M.CORNERS.forEach(c => { const [a, b, x] = c.map(home); allowed.add(a + b + x); allowed.add(b + x + a); allowed.add(x + a + b); });
+    // Counting bad pieces bounds validate's errors only once it gets that far (all stickers known,
+    // six different centers, nine of each color); otherwise every combination is tried in full.
+    const counts = {};
+    photos.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+    const sane = M.COLORS.every(c => counts[c] === 9) && new Set(M.FACES.map((f, fi) => photos[fi * 9 + 4])).size === 6;
+    const valid = new Map(), state = new Array(54), ks = [0, 0, 0, 0, 0, 0];
     let bad = null;
-    for (let c = 0; c < 4096; c++) {
-      const ks = M.FACES.map((f, i) => (c >> (2 * i)) & 3);
-      const state = [].concat(...ks.map((k, i) => turned[i][k]));
-      const off = ks.reduce((n, k, i) => n + (exp[i] !== null && k !== exp[i] ? 1 : 0), 0);
+    const leaf = off => {
       const key = state.join(''), seen = valid.get(key);
-      if (seen) { if (off < seen.off) Object.assign(seen, { ks, off }); continue; }
+      if (seen) { if (off < seen.off) Object.assign(seen, { ks: ks.slice(), off }); return; }
       const v = Val.validate(state);
-      if (v.ok) valid.set(key, { ks, off, state });
-      else if (!bad || v.errors.length < bad.errors.length || (v.errors.length === bad.errors.length && off < bad.off)) bad = { ks, off, state, errors: v.errors };
-    }
+      if (v.ok) valid.set(key, { ks: ks.slice(), off, state: state.slice() });
+      else if (!bad || v.errors.length < bad.errors.length || (v.errors.length === bad.errors.length && off < bad.off)) bad = { ks: ks.slice(), off, state: state.slice(), errors: v.errors };
+    };
+    const visit = (d, broken, offSoFar) => {
+      if (d === 6) { leaf(offSoFar); return; }
+      const fi = DEPTH_FACE[d];
+      for (let k = 0; k < 4; k++) {
+        const t = turned[fi][k];
+        for (let i = 0; i < 9; i++) state[fi * 9 + i] = t[i];
+        ks[fi] = k;
+        const off = offSoFar + (exp[fi] !== null && k !== exp[fi] ? 1 : 0);
+        let b = broken;
+        if (sane) {
+          for (const p of DONE_AT[d]) if (!allowed.has(p.map(i => state[i]).join(''))) b++;
+          // Every bad piece is one of validate's errors, so skip what can't be a real cube once one is
+          // known, and what can't beat the closest non-cube so far (fewer errors, then fewer off-guide).
+          if (b > 0 && valid.size) continue;
+          if (bad && (b > bad.errors.length || (b === bad.errors.length && off >= bad.off))) continue;
+        }
+        visit(d + 1, b, off);
+      }
+    };
+    visit(0, 0, 0);
     const unc = new Set(uncertain);
     const follow = ks => {
       const out = [];

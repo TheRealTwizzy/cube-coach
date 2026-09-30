@@ -291,12 +291,102 @@ test('the guide cube shows the centers and the faces scanned so far, the right w
   }
 });
 
+// The first version of orient: every one of the 4096 turn combinations, each checked in full.
+// The fast search must give exactly the same answer.
+const NINE = [0, 1, 2, 3].map(k => Scan.turnFace([...Array(9).keys()], k));
+function referenceOrient(photos, uncertain = [], expected = {}) {
+  const turned = M.FACES.map((f, fi) => NINE.map(map => map.map(p => photos[fi * 9 + p])));
+  const exp = M.FACES.map(f => (Number.isInteger(expected[f]) ? expected[f] : null));
+  const valid = new Map();
+  let bad = null;
+  for (let c = 0; c < 4096; c++) {
+    const ks = M.FACES.map((f, i) => (c >> (2 * i)) & 3);
+    const state = [].concat(...ks.map((k, i) => turned[i][k]));
+    const off = ks.reduce((n, k, i) => n + (exp[i] !== null && k !== exp[i] ? 1 : 0), 0);
+    const key = state.join(''), seen = valid.get(key);
+    if (seen) { if (off < seen.off) Object.assign(seen, { ks, off }); continue; }
+    const v = validate(state);
+    if (v.ok) valid.set(key, { ks, off, state });
+    else if (!bad || v.errors.length < bad.errors.length || (v.errors.length === bad.errors.length && off < bad.off)) bad = { ks, off, state, errors: v.errors };
+  }
+  const unc = new Set(uncertain);
+  const follow = ks => {
+    const out = [];
+    ks.forEach((k, fi) => NINE[k].forEach((p, i) => { if (unc.has(fi * 9 + p)) out.push(fi * 9 + i); }));
+    return out.sort((a, b) => a - b);
+  };
+  const turnsOf = ks => Object.fromEntries(M.FACES.map((f, i) => [f, ks[i]]));
+  if (valid.size) {
+    const list = [...valid.values()], least = Math.min(...list.map(v => v.off));
+    const chosen = list.find(v => v.off === least);
+    const cells = new Set();
+    list.forEach(v => { if (v !== chosen) v.state.forEach((c, i) => { if (c !== chosen.state[i]) cells.add(i); }); });
+    const ambiguousCells = [...cells].sort((a, b) => a - b);
+    return {
+      ok: true, state: chosen.state, turns: turnsOf(chosen.ks), uncertain: follow(chosen.ks), errors: [], suspects: [],
+      ambiguous: M.FACES.filter((f, fi) => ambiguousCells.some(i => Math.floor(i / 9) === fi)), ambiguousCells,
+    };
+  }
+  const u = follow(bad.ks), close = new Set(u), wrong = new Set(bad.errors.flatMap(e => e.cells));
+  const score = M.FACES.map((f, fi) => {
+    let s = 0;
+    for (let i = fi * 9; i < fi * 9 + 9; i++) s += (wrong.has(i) && close.has(i) ? 3 : 0) + (wrong.has(i) ? 1 : 0) + (close.has(i) ? 1 : 0);
+    return s;
+  });
+  const suspects = M.FACES.map((f, fi) => ({ f, s: score[fi] })).filter(x => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 2).map(x => x.f);
+  return { ok: false, state: bad.state, turns: turnsOf(bad.ks), uncertain: u, errors: bad.errors, suspects, ambiguous: [], ambiguousCells: [] };
+}
+// Orient inputs of every kind: photos turned at random, some held as expected, some misread.
+function orientCases() {
+  const rng = seededRng(40), cases = [];
+  const photosOf = (state, turns) => [].concat(...M.FACES.map(f => Scan.turnFace(faceOf(state, f), turns[f])));
+  const randomTurns = () => Object.fromEntries(M.FACES.map(f => [f, Math.floor(rng() * 4)]));
+  const fixOf = turns => Object.fromEntries(M.FACES.map(f => [f, (4 - turns[f]) % 4]));
+  const someOf = t => Object.fromEntries(Object.entries(t).filter(() => rng() < 0.6));
+  const uncertainOf = () => [...Array(3)].map(() => Math.floor(rng() * 54)).filter(i => i % 9 !== 4);
+  const add = (state, turns, expected) => cases.push({ photos: photosOf(state, turns), uncertain: uncertainOf(), expected });
+  for (let n = 0; n < 10; n++) { const t = randomTurns(); add(scrambled(rng), t, n % 2 ? fixOf(t) : someOf(fixOf(t))); }
+  for (const m of ['R', "U'", 'F2', 'M2', 'L D']) { const t = randomTurns(); add(M.applyMoves(M.SOLVED, m), t, fixOf(t)); add(M.applyMoves(M.SOLVED, m), t, {}); }
+  const P = require('../js/patterns.js');
+  P.entries().filter((e, i) => i % 15 === 0).forEach(e => { const t = randomTurns(); add(e.state, t, someOf(fixOf(t))); });
+  for (let n = 0; n < 10; n++) {
+    const bad = scrambled(rng), f = Math.floor(rng() * 6) * 9, a = f + [0, 1, 2, 3, 5, 6, 7, 8][Math.floor(rng() * 8)];
+    const b = f + [0, 1, 2, 3, 5, 6, 7, 8][Math.floor(rng() * 8)];
+    [bad[a], bad[b]] = [bad[b], bad[a]]; // a misread pair (sometimes the same sticker, i.e. none)
+    if (n % 3 === 0) { const c = Math.floor(rng() * 54), d = Math.floor(rng() * 54); if (c % 9 !== 4 && d % 9 !== 4) [bad[c], bad[d]] = [bad[d], bad[c]]; }
+    const t = randomTurns();
+    add(bad, t, fixOf(t));
+  }
+  const parity = scrambled(rng);
+  M.EDGES[0].forEach((i, k) => { const j = M.EDGES[1][k]; [parity[i], parity[j]] = [parity[j], parity[i]]; });
+  add(parity, randomTurns(), {});
+  const twoWhites = scrambled(rng);
+  twoWhites[22] = twoWhites[4]; // two centers alike: not even worth turning faces
+  add(twoWhites, randomTurns(), {});
+  return cases;
+}
+
+test('the fast orient gives exactly the same answer as trying every combination in full', () => {
+  orientCases().forEach(({ photos, uncertain, expected }, n) => {
+    assert.deepEqual(Scan.orient(photos, uncertain, expected), referenceOrient(photos, uncertain, expected), `case ${n}`);
+  });
+});
+
 test('orient is quick enough for a phone', () => {
-  const state = scrambled(seededRng(18));
-  const t = process.hrtime.bigint();
-  Scan.orient(state, [], {});
-  const ms = Number(process.hrtime.bigint() - t) / 1e6;
-  assert.ok(ms < 300, `${ms.toFixed(0)} ms`);
+  const rng = seededRng(18), times = { real: [], misread: [] };
+  for (let n = 0; n < 10; n++) {
+    const state = scrambled(rng), bad = state.slice();
+    [bad[9], bad[10]] = [bad[10], bad[9]];
+    for (const [kind, s] of [['real', state], ['misread', bad]]) {
+      const t = process.hrtime.bigint();
+      Scan.orient(s, [], {});
+      times[kind].push(Number(process.hrtime.bigint() - t) / 1e6);
+    }
+  }
+  const median = a => a.slice().sort((p, q) => p - q)[a.length >> 1];
+  // A phone is several times slower than this machine; these leave it well under a tenth of a second.
+  assert.ok(median(times.real) < 8, `real cube: ${median(times.real).toFixed(1)} ms`);
+  assert.ok(median(times.misread) < 25, `misread cube: ${median(times.misread).toFixed(1)} ms`);
 });
 
 // A detection as findFace returns it: a square of side `size` at (x, y).
