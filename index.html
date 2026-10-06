@@ -45,14 +45,24 @@
 
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
   .viewer { min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); display: grid; gap: 8px; }
-  #view { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 78vh; overflow: hidden; border-radius: 16px;
+  #view, #mechanism-view { position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: 78vh; overflow: hidden; border-radius: 16px;
     border: 1px solid var(--line); background: radial-gradient(circle at 50% 40%, var(--surface) 0%, var(--surface-2) 75%); }
-  #view canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  #view canvas, #mechanism-view canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   .no3d { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--muted); }
   .view-note { margin: 0; text-align: center; color: var(--muted); font-size: 13px; }
   .view-box { position: relative; }
   .view-reset { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; }
   .view-reset svg { width: 20px; height: 20px; }
+  .mechanism-controls { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .mechanism-controls label { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; }
+  .mechanism-controls input { width: 100%; accent-color: var(--accent); }
+  .mechanism-controls output { color: var(--muted); font: 500 13px/1 var(--font-mono); }
+  .mechanism-info { min-height: 164px; align-content: start; }
+  .mechanism-title { margin: 0; font: 700 30px/1.1 var(--font-display); letter-spacing: .02em; }
+  .mechanism-detail { margin: 0; color: var(--muted); max-width: 56ch; }
+  .part-choices { display: flex; flex-wrap: wrap; gap: 7px; }
+  .part-choice { padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); cursor: pointer; }
+  .part-choice[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
   .panel { display: grid; gap: 24px; min-width: 0; }
   .section { display: grid; gap: 12px; min-width: 0; }
@@ -223,7 +233,7 @@
   @media (max-width: 860px) {
     .layout { grid-template-columns: 1fr; }
     .viewer { position: static; }
-    #view { aspect-ratio: 4 / 3; max-height: 46vh; }
+    #view, #mechanism-view { aspect-ratio: 4 / 3; max-height: 46vh; }
     /* Playback on phones: keep the cube on top and the turn controls at the bottom of the screen. */
     .is-playing .viewer { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 3; padding-block: 8px; background: var(--ground); }
     .is-playing #view { max-height: 34vh; }
@@ -242,6 +252,7 @@
     .is-scanning .scan { gap: 8px; }
     .is-scanning .scan-cam, .is-scanning .scan-photo { width: min(100%, 480px, calc(34vh * var(--ar, 1))); }
     .is-scanning #scan-area { scroll-margin-top: calc(22vh + 20px); }
+    .is-mechanism .viewer { position: static; }
   }
   @media (max-width: 440px) {
     .methods { grid-template-columns: 1fr; }
@@ -266,6 +277,7 @@
       <button type="button" id="mode-cube" aria-pressed="true">My Cube</button>
       <button type="button" id="mode-solve" aria-pressed="false" aria-disabled="true">Solve</button>
       <button type="button" id="mode-patterns" aria-pressed="false" aria-disabled="true">Patterns</button>
+      <button type="button" id="mode-mechanism" aria-pressed="false">How the cube works</button>
     </nav>
     <div class="hold" id="hold" aria-live="polite"></div>
   </header>
@@ -275,10 +287,16 @@
     <section class="viewer" aria-label="3D cube">
       <div class="view-box">
         <div id="view"></div>
+        <div id="mechanism-view" hidden></div>
         <button class="icon-btn view-reset" id="btn-reset-view" type="button" aria-label="Reset the view" title="Reset the view">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7.5 6.5 12 11V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg></button>
       </div>
-      <p class="view-note">Drag to look around. The ↺ button puts the view back.</p>
+      <div class="mechanism-controls" id="mechanism-controls" hidden>
+        <label for="explosion">Open the cube <output id="explosion-out" for="explosion">Assembled</output></label>
+        <input id="explosion" type="range" min="0" max="100" value="0" step="1" aria-describedby="explosion-help">
+        <p class="tip" id="explosion-help">Move the slider to separate the pieces. Drag the cube to look around, or use the wheel to zoom.</p>
+      </div>
+      <p class="view-note" id="view-note">Drag to look around. The ↺ button puts the view back.</p>
     </section>
 
     <section class="panel" id="cube-panel" aria-label="My Cube">
@@ -350,6 +368,23 @@
         <button class="btn primary" id="btn-confirm" type="button">This is my cube</button>
         <p class="status" id="cube-status" aria-live="polite"></p>
         <ul class="errors" id="errors" aria-live="polite"></ul>
+      </div>
+    </section>
+
+    <section class="panel" id="mechanism-panel" aria-label="How the cube works" hidden>
+      <div class="section">
+        <h2 tabindex="-1">How the cube works</h2>
+        <p class="tip">Start with the whole cube, then open it up. Select a piece to see how it can move without coming out.</p>
+        <div class="part-choices" role="group" aria-label="Explore a kind of piece">
+          <button class="part-choice" type="button" data-mechanism-part="core" aria-pressed="true">Core</button>
+          <button class="part-choice" type="button" data-mechanism-part="center" aria-pressed="false">Center</button>
+          <button class="part-choice" type="button" data-mechanism-part="edge" aria-pressed="false">Edge</button>
+          <button class="part-choice" type="button" data-mechanism-part="corner" aria-pressed="false">Corner</button>
+        </div>
+      </div>
+      <div class="card mechanism-info" aria-live="polite">
+        <p class="mechanism-title" id="mechanism-title">Core</p>
+        <p class="mechanism-detail" id="mechanism-detail">The core stays in the middle. Its six arms hold the centers, so the cube has a fixed frame to turn around.</p>
       </div>
     </section>
 
@@ -455,4 +490,6 @@
 <script src="js/fast.js"></script>
 <script src="js/beginner.js"></script>
 <script src="js/view3d.js"></script>
+<script src="js/mechanism.js"></script>
+<script src="js/mechanism3d.js"></script>
 <script src="js/app.js"></script>

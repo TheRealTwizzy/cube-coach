@@ -18,7 +18,7 @@
   const FACE_WORD = D.FACE_WORD;
   const PALETTE = ['w', 'y', 'g', 'b', 'r', 'o'];
   const NET_POS = { U: [1, 2], L: [2, 1], F: [2, 2], R: [2, 3], B: [2, 4], D: [3, 2] };
-  const PANELS = { cube: 'cube-panel', solve: 'solve-panel', patterns: 'pattern-panel', play: 'play-panel' };
+  const PANELS = { cube: 'cube-panel', solve: 'solve-panel', patterns: 'pattern-panel', mechanism: 'mechanism-panel', play: 'play-panel' };
   const ICON_PLAY = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg>';
   const ICON_PAUSE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
 
@@ -34,7 +34,7 @@
     cube: blankCube(),  // My Cube: the digital twin of the cube in the user's hands
     cubeLabel: '',      // where My Cube's current state came from, e.g. "End of Superflip"
     confirmed: false,   // the user confirmed My Cube and it is a real, solvable cube
-    color: 'w', face: 'F', bad: new Set(), check: new Set(), method: 'fast', busy: false, view: null,
+    color: 'w', face: 'F', bad: new Set(), check: new Set(), method: 'fast', busy: false, view: null, mechanism: null,
     play: { kind: 'solve', method: 'fast', name: '', picture: null, relabeled: false, custom: false },
     sel: null,          // selected pattern { index?, name, moves, state, custom, aliasText }
   };
@@ -60,6 +60,7 @@
     Object.entries(PANELS).forEach(([key, id]) => { $(id).hidden = key !== name; });
     document.body.classList.toggle('is-playing', name === 'play');
     document.body.classList.toggle('is-patterns', name === 'patterns');
+    document.body.classList.toggle('is-mechanism', name === 'mechanism');
     document.body.classList.toggle('is-scanning', name === 'cube' && !!scan);
     if (focus) {
       const target = name === 'play' ? $('card') : document.querySelector(`#${PANELS[name]} h2`);
@@ -67,17 +68,17 @@
     }
   }
   function renderModeSwitch() {
-    ['cube', 'solve', 'patterns'].forEach(m => {
+    ['cube', 'solve', 'patterns', 'mechanism'].forEach(m => {
       const b = $(`mode-${m}`);
       b.setAttribute('aria-pressed', String(app.mode === m));
-      const locked = app.busy || (m !== 'cube' && !app.confirmed);
+      const locked = app.busy || ((m === 'solve' || m === 'patterns') && !app.confirmed);
       b.setAttribute('aria-disabled', String(locked));
       b.title = app.busy ? 'Wait for the solve to finish' : locked ? 'Confirm My Cube first' : '';
     });
   }
   function setMode(mode) {
     if (app.busy) return;
-    if (mode !== 'cube' && !app.confirmed) {
+    if ((mode === 'solve' || mode === 'patterns') && !app.confirmed) {
       if (!visible('cube')) return;
       const status = $('cube-status');
       status.classList.remove('ok');
@@ -92,24 +93,50 @@
       renderModeSwitch();
       if (mode === 'cube') enterCube();
       else if (mode === 'solve') enterSolve();
-      else enterPatterns();
+      else if (mode === 'patterns') enterPatterns();
+      else enterMechanism();
     });
   }
+  function showMechanismView(show) {
+    $('view').hidden = show;
+    $('mechanism-view').hidden = !show;
+    $('mechanism-controls').hidden = !show;
+    $('view-note').textContent = show
+      ? 'Drag to orbit. Use the wheel to zoom. Click a piece, or choose a kind of piece below.'
+      : 'Drag to look around. The ↺ button puts the view back.';
+    if (show && app.mechanism) app.mechanism.resize();
+  }
   function enterCube() {
+    showMechanismView(false);
     showPanel('cube', true);
     renderCube();
     if (scan) { showGuide(false); startLive(); }
   }
   function enterSolve() {
+    showMechanismView(false);
     showPanel('solve', true);
     renderSolvePanel();
   }
   function enterPatterns() {
+    showMechanismView(false);
     buildGallery();
     showPanel('patterns', true);
     renderHold(app.cube);
     showPatternInView();
     requestRoute();
+  }
+  function chooseMechanismPart(part) {
+    const info = window.CubeMechanism.describe(part.kind);
+    $('mechanism-title').textContent = info.title;
+    $('mechanism-detail').textContent = info.detail;
+    document.querySelectorAll('[data-mechanism-part]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.mechanismPart === part.kind));
+    });
+  }
+  function enterMechanism() {
+    showMechanismView(true);
+    showPanel('mechanism', true);
+    if (app.mechanism) app.mechanism.selectKind('core');
   }
 
   // ---------- 2D nets ----------
@@ -1132,8 +1159,19 @@
       $('btn-reset-view').hidden = true;
     }
   }
+  function initMechanism() {
+    if (!window.THREE || !window.CubeMechanism || !window.MechanismView) {
+      $('mode-mechanism').hidden = true;
+      return;
+    }
+    try {
+      app.mechanism = new window.MechanismView($('mechanism-view'), chooseMechanismPart);
+    } catch (e) {
+      $('mode-mechanism').hidden = true;
+    }
+  }
   function wire() {
-    ['cube', 'solve', 'patterns'].forEach(m => $(`mode-${m}`).addEventListener('click', () => {
+    ['cube', 'solve', 'patterns', 'mechanism'].forEach(m => $(`mode-${m}`).addEventListener('click', () => {
       if (app.mode !== m || !visible(m)) setMode(m);
     }));
     $('net').addEventListener('click', e => {
@@ -1191,7 +1229,19 @@
     $('btn-show').addEventListener('click', showMe);
 
     $('btn-edit').addEventListener('click', backFromPlay);
-    $('btn-reset-view').addEventListener('click', () => { if (app.view) app.view.resetView(); });
+    $('btn-reset-view').addEventListener('click', () => {
+      const current = app.mode === 'mechanism' ? app.mechanism : app.view;
+      if (current) current.resetView();
+    });
+    $('explosion').addEventListener('input', e => {
+      const value = Number(e.target.value);
+      $('explosion-out').textContent = value === 0 ? 'Assembled' : value === 100 ? 'Fully open' : `${value}% open`;
+      if (app.mechanism) app.mechanism.setExplosion(value / 100);
+    });
+    document.querySelector('.part-choices').addEventListener('click', e => {
+      const button = e.target.closest('[data-mechanism-part]');
+      if (button && app.mechanism) app.mechanism.selectKind(button.dataset.mechanismPart);
+    });
     $('btn-restart').addEventListener('click', () => player.jump(0));
     $('btn-prev').addEventListener('click', () => player.back());
     $('btn-next').addEventListener('click', () => { player.stop(); player.next(); });
@@ -1222,6 +1272,7 @@
     solveCells = buildNet($('solve-net'), false);
     buildEditor();
     initView();
+    initMechanism();
     player = P.createPlayer({
       animate: (move, ms) => (app.view ? app.view.animateMove(move, ms) : Promise.resolve()),
       onChange: renderPlay,
